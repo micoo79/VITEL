@@ -95,10 +95,16 @@ végpont lényege:
 from eov_core import wgs_to_eov, eov_to_wgs
 ```
 
-> **Kész böngészős GUI van a csomagban:** `webapp.py` (FastAPI) + `static/index.html`.
-> Kézi bevitel oda-vissza és intelligens fájl import (elválasztó-felismerés,
-> oszlop-beállítás az első 5 sor mintája alapján, tizedesvessző, CSV letöltés).
-> Futtatás és tesztelés: **[WEBAPP.md](WEBAPP.md)**.
+> **Két kész GUI van a csomagban:**
+> - **Publikus, statikus webapp** (`docs/`) — *szerver nélkül*, teljesen a böngészőben
+>   fut (a PROJ-logika JS-ben újraimplementálva, < 0,01 mm-re a PROJ-hoz). GitHub
+>   Pages-re publikálható: **https://micoo79.github.io/VITEL/** · lásd **[PAGES.md](PAGES.md)**.
+> - **Szerveres webapp** (`webapp.py` FastAPI + `static/`) — a PROJ-ot használja
+>   közvetlenül; helyi/önálló üzemre. Lásd **[WEBAPP.md](WEBAPP.md)**.
+>
+> Mindkettő tudja: kézi bevitel oda-vissza + intelligens fájl import
+> (elválasztó-felismerés, oszlop-beállítás az első 5 sor mintája alapján,
+> tizedesvessző, CSV letöltés).
 
 JavaScript/böngésző oldalon: a PROJ elérhető `proj4js`-ként, vagy a
 számítás maradjon a szerveren (a rácsfájlok miatt ez egyszerűbb és pontos).
