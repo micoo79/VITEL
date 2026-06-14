@@ -1,2 +1,6 @@
-# A mag-kod egyetlen fuggosege. A wheel hozza a PROJ 9.5.1+ konyvtarat is.
+# A mag-kod (eov_core.py) egyetlen fuggosege. A wheel hozza a PROJ 9.5.1+-t is.
 pyproj>=3.7
+
+# A webes GUI-hoz (webapp.py). A mag-kod ezek nelkul is mukodik.
+fastapi>=0.110
+uvicorn[standard]>=0.27

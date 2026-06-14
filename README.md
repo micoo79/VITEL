@@ -95,6 +95,11 @@ végpont lényege:
 from eov_core import wgs_to_eov, eov_to_wgs
 ```
 
+> **Kész böngészős GUI van a csomagban:** `webapp.py` (FastAPI) + `static/index.html`.
+> Kézi bevitel oda-vissza és intelligens fájl import (elválasztó-felismerés,
+> oszlop-beállítás az első 5 sor mintája alapján, tizedesvessző, CSV letöltés).
+> Futtatás és tesztelés: **[WEBAPP.md](WEBAPP.md)**.
+
 JavaScript/böngésző oldalon: a PROJ elérhető `proj4js`-ként, vagy a
 számítás maradjon a szerveren (a rácsfájlok miatt ez egyszerűbb és pontos).
 
