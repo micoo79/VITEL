@@ -69,6 +69,7 @@
   <div class="tabs" style="display:none;" id="tabs">
     <div class="tab active" data-tab="manual">Kézi bevitel</div>
     <div class="tab" data-tab="file">Fájl import</div>
+    <div class="tab" data-tab="dxf">DXF → KML</div>
   </div>
 
   <!-- ============================ KÉZI ============================ -->
@@ -144,6 +145,33 @@
       <div id="errBox"></div>
     </div>
   </section>
+
+  <!-- ============================ DXF -> KML ============================ -->
+  <section class="panel" id="panel-dxf">
+    <div class="card">
+      <p class="muted" style="margin-top:0;">
+        A DXF-et <b>EOV koordinátarendszerben</b> értelmezi, és a fenti
+        transzformációval számolja át WGS84-re a KML-hez. A KML-ben nem
+        értelmezhető elemek (pl. SPLINE, HATCH, blokkok) kimaradnak — nem hibázik el.
+      </p>
+      <div class="row">
+        <div>
+          <label>DXF fájl kiválasztása (.dxf, ASCII)</label>
+          <input id="dxfInput" type="file" accept=".dxf,text/*">
+        </div>
+      </div>
+      <div class="toolbar">
+        <label class="grid-check"><input type="checkbox" id="optPoints" checked> Pont objektumok kellenek</label>
+        <label class="grid-check"><input type="checkbox" id="optLabels" checked> Feliratok (TEXT/MTEXT) kellenek</label>
+        <label class="grid-check"><input type="checkbox" id="optSwap"> EOV X/Y felcserélése</label>
+      </div>
+      <div class="toolbar">
+        <button id="btnDxf">Konvertálás KML-be</button>
+        <span class="muted" id="dxfInfo"></span>
+      </div>
+      <div class="result" id="dxfResult" style="display:none;"></div>
+    </div>
+  </section>
 </main>
 
 <footer>
@@ -153,6 +181,7 @@
 
 <script type="module">
 import { EOV } from './eov.js';
+import { parseDxf, toKml } from './dxf2kml.js';
 
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
@@ -360,6 +389,40 @@ $("#btnDownload").onclick = () => {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([csv], {type:"text/csv;charset=utf-8"}));
   a.download = "vitel_eredmeny.csv"; a.click();
+};
+
+// ======================= DXF -> KML =======================
+let DXFTEXT = "", DXFNAME = "export";
+$("#dxfInput").onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  DXFNAME = f.name.replace(/\.[^.]+$/, "");
+  const rd = new FileReader();
+  rd.onload = () => { DXFTEXT = rd.result; $("#dxfInfo").textContent = `Betöltve: ${f.name}`; };
+  rd.readAsText(f);
+};
+$("#btnDxf").onclick = () => {
+  if (!EOVENG) return;
+  if (!DXFTEXT.trim()){ $("#dxfInfo").textContent = "Előbb válassz DXF fájlt."; return; }
+  let parsed;
+  try { parsed = parseDxf(DXFTEXT); }
+  catch(e){ $("#dxfInfo").textContent = "Nem olvasható DXF: " + e.message; return; }
+  const { kml, stats } = toKml(parsed, EOVENG, {
+    points: $("#optPoints").checked, labels: $("#optLabels").checked,
+    swapXY: $("#optSwap").checked, name: DXFNAME,
+  });
+  const skippedT = Object.entries(stats.skippedTypes || {})
+    .map(([k,v]) => `${k}×${v}`).join(", ") || "nincs";
+  $("#dxfResult").style.display = "block";
+  $("#dxfResult").innerHTML =
+    `<div><b>Vonalak/poligonok:</b> ${stats.lines}</div>` +
+    `<div><b>Pontok:</b> ${stats.points}</div>` +
+    `<div><b>Feliratok:</b> ${stats.labels}</div>` +
+    `<div class="muted">Rácson kívül emiatt kihagyva: ${stats.skippedRange} elem</div>` +
+    `<div class="muted">Nem KML-be illő, kihagyott típusok: ${skippedT}</div>`;
+  $("#dxfInfo").textContent = "";
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([kml], {type:"application/vnd.google-earth.kml+xml"}));
+  a.download = DXFNAME + ".kml"; a.click();
 };
 </script>
 </body>
