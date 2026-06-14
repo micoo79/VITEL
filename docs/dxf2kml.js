@@ -111,49 +111,81 @@ function arc(cx, cy, r, a0, a1, n) {
 
 const xmlEsc = s => String(s).replace(/[<>&'"]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" }[c]));
 
-// --- KML eloallitas --------------------------------------------------------
+// --- KML + terkep-elonezet (GeoJSON) eloallitas ---------------------------
+// Visszaad: { kml, features, stats }  -  a features a terkep-elonezethez kell.
 export function toKml(parsed, eov, { points = true, labels = true, swapXY = false, name = "VITEL export" } = {}) {
   const stats = { points: 0, lines: 0, labels: 0, skippedRange: 0, skippedTypes: parsed.skippedTypes };
-  // EOV (sik) -> WGS84; null ha rács-szelen kivul
+  // EOV (sik) -> [lon, lat] szampar; null ha rács-szelen kivul
   const toLL = (x, y) => {
     if (x === null || y === null || Number.isNaN(x) || Number.isNaN(y)) return null;
     try {
       const r = swapXY ? eov.eovToWgs(y, x) : eov.eovToWgs(x, y);
-      return `${r.lon.toFixed(8)},${r.lat.toFixed(8)},0`;
+      return [r.lon, r.lat];
     } catch (_) { return null; }
   };
-  const placemarks = [];
+  const features = [];
 
   for (const e of parsed.ents) {
     if (e.type === "POINT") {
       if (!points) continue;
       const c = toLL(e.x, e.y);
       if (!c) { stats.skippedRange++; continue; }
-      placemarks.push(`<Placemark><Point><coordinates>${c}</coordinates></Point></Placemark>`);
+      features.push({ kind: "Point", coords: c, name: null });
       stats.points++;
     } else if (e.type === "TEXT") {
       if (!labels) continue;
       const c = toLL(e.x, e.y);
       if (!c || !e.text) { if (!c) stats.skippedRange++; continue; }
-      placemarks.push(`<Placemark><name>${xmlEsc(e.text)}</name><Point><coordinates>${c}</coordinates></Point></Placemark>`);
+      features.push({ kind: "Point", coords: c, name: e.text });
       stats.labels++;
     } else if (e.type === "POLYLINE" || e.type === "LINE") {
       const coords = []; let bad = false;
       for (const [x, y] of e.verts) { const c = toLL(x, y); if (!c) { bad = true; break; } coords.push(c); }
       if (bad || coords.length < 2) { stats.skippedRange++; continue; }
       if (e.closed) {
-        const ring = coords.slice(); if (ring[0] !== ring[ring.length - 1]) ring.push(ring[0]);
-        placemarks.push(`<Placemark><Polygon><outerBoundaryIs><LinearRing><coordinates>${ring.join(" ")}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>`);
+        const ring = coords.slice();
+        const a = ring[0], b = ring[ring.length - 1];
+        if (a[0] !== b[0] || a[1] !== b[1]) ring.push(a);
+        features.push({ kind: "Polygon", coords: ring, name: null });
       } else {
-        placemarks.push(`<Placemark><LineString><coordinates>${coords.join(" ")}</coordinates></LineString></Placemark>`);
+        features.push({ kind: "LineString", coords, name: null });
       }
       stats.lines++;
     }
   }
 
+  const fc = (ll) => `${ll[0].toFixed(8)},${ll[1].toFixed(8)},0`;
+  const placemarks = features.map((f) => {
+    if (f.kind === "Point") {
+      const nm = f.name ? `<name>${xmlEsc(f.name)}</name>` : "";
+      return `<Placemark>${nm}<Point><coordinates>${fc(f.coords)}</coordinates></Point></Placemark>`;
+    }
+    if (f.kind === "Polygon") {
+      return `<Placemark><Polygon><outerBoundaryIs><LinearRing><coordinates>${f.coords.map(fc).join(" ")}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>`;
+    }
+    return `<Placemark><LineString><coordinates>${f.coords.map(fc).join(" ")}</coordinates></LineString></Placemark>`;
+  });
+
   const kml = `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${xmlEsc(name)}</name>
 ${placemarks.join("\n")}
 </Document></kml>`;
-  return { kml, stats };
+  return { kml, features, stats };
+}
+
+// A features -> GeoJSON FeatureCollection a Leaflet elonezethez.
+export function toGeoJSON(features) {
+  return {
+    type: "FeatureCollection",
+    features: features.map((f) => ({
+      type: "Feature",
+      properties: f.name ? { name: f.name } : {},
+      geometry: {
+        type: f.kind,
+        coordinates: f.kind === "Point" ? f.coords
+          : f.kind === "Polygon" ? [f.coords]
+          : f.coords,
+      },
+    })),
+  };
 }
