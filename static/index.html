@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VITEL — EOV ⇄ WGS84 transzformáció</title>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --line:#334155; --txt:#e2e8f0;
+          --muted:#94a3b8; --accent:#38bdf8; --ok:#22c55e; --err:#ef4444; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,Segoe UI,Roboto,sans-serif;
+         background:var(--bg); color:var(--txt); line-height:1.5; }
+  header { padding:18px 24px; border-bottom:1px solid var(--line); }
+  header h1 { margin:0; font-size:20px; }
+  header p { margin:4px 0 0; color:var(--muted); font-size:13px; }
+  main { max-width:1000px; margin:0 auto; padding:24px; }
+  .tabs { display:flex; gap:8px; margin-bottom:20px; }
+  .tab { padding:10px 18px; background:var(--card); border:1px solid var(--line);
+         border-radius:8px; cursor:pointer; color:var(--muted); }
+  .tab.active { color:var(--txt); border-color:var(--accent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px;
+          padding:20px; margin-bottom:18px; }
+  .panel { display:none; } .panel.active { display:block; }
+  label { font-size:13px; color:var(--muted); display:block; margin-bottom:4px; }
+  input,select { width:100%; padding:9px 10px; background:#0b1220; color:var(--txt);
+          border:1px solid var(--line); border-radius:7px; font-size:14px; }
+  .row { display:flex; gap:14px; flex-wrap:wrap; }
+  .row > div { flex:1; min-width:140px; }
+  .dir { display:flex; gap:10px; margin-bottom:16px; }
+  .dir label { display:flex; align-items:center; gap:6px; color:var(--txt);
+          background:#0b1220; border:1px solid var(--line); padding:9px 14px;
+          border-radius:7px; cursor:pointer; margin:0; }
+  .dir input { width:auto; }
+  button { background:var(--accent); color:#06283d; border:0; padding:10px 18px;
+          border-radius:8px; font-weight:600; cursor:pointer; font-size:14px; }
+  button.ghost { background:transparent; color:var(--accent);
+          border:1px solid var(--accent); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .result { margin-top:16px; padding:14px; background:#0b1220; border-radius:8px;
+          border:1px solid var(--line); font-family:ui-monospace,monospace; }
+  .muted { color:var(--muted); font-size:13px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; margin-top:10px;
+          display:block; overflow:auto; max-height:420px; }
+  th,td { border:1px solid var(--line); padding:6px 9px; text-align:left;
+          white-space:nowrap; }
+  th { background:#0b1220; position:sticky; top:0; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:99px; font-size:12px;
+          background:#0b1220; border:1px solid var(--line); }
+  .pill.ok { color:var(--ok); border-color:var(--ok); }
+  .pill.err { color:var(--err); border-color:var(--err); }
+  .grid-check { display:flex; align-items:center; gap:6px; color:var(--txt); margin:0; }
+  .grid-check input { width:auto; }
+  .toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:14px 0; }
+  hr { border:0; border-top:1px solid var(--line); margin:18px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>VITEL — EOV ⇄ WGS84 / ETRS89 transzformáció</h1>
+  <p>Centiméter-pontos magyar koordináta-átszámítás (HD72/EOV + Balti magasság) · BME javítórácsok · PROJ</p>
+</header>
+
+<main>
+  <div class="tabs">
+    <div class="tab active" data-tab="manual">Kézi bevitel</div>
+    <div class="tab" data-tab="file">Fájl import</div>
+  </div>
+
+  <!-- ============================ KÉZI ============================ -->
+  <section class="panel active" id="panel-manual">
+    <div class="card">
+      <div class="dir" id="dir-manual">
+        <label><input type="radio" name="dirM" value="wgs2eov" checked> WGS84/ETRS89 → EOV</label>
+        <label><input type="radio" name="dirM" value="eov2wgs"> EOV → WGS84/ETRS89</label>
+      </div>
+      <div class="row">
+        <div><label id="lblMa">Szélesség φ (lat)</label><input id="ma" type="text" placeholder="47.503933139"></div>
+        <div><label id="lblMb">Hosszúság λ (lon)</label><input id="mb" type="text" placeholder="19.047447408"></div>
+        <div><label id="lblMc">Magasság (opcionális)</label><input id="mc" type="text" placeholder="150.0"></div>
+      </div>
+      <div class="toolbar">
+        <button id="btnTransform">Átszámítás</button>
+        <button class="ghost" id="btnSwap">⇄ Irány csere</button>
+      </div>
+      <div class="result" id="manualResult"><span class="muted">Az eredmény itt jelenik meg.</span></div>
+    </div>
+  </section>
+
+  <!-- ============================ FÁJL ============================ -->
+  <section class="panel" id="panel-file">
+    <div class="card">
+      <div class="row">
+        <div>
+          <label>Fájl kiválasztása (.csv / .txt)</label>
+          <input id="fileInput" type="file" accept=".csv,.txt,text/*">
+        </div>
+      </div>
+      <p class="muted">…vagy illeszd be a szöveget közvetlenül:</p>
+      <textarea id="pasteArea" rows="4" placeholder="id;lat;lon&#10;P1;47,5039;19,0474" style="width:100%;padding:10px;background:#0b1220;color:var(--txt);border:1px solid var(--line);border-radius:7px;font-family:ui-monospace,monospace;"></textarea>
+      <div class="toolbar">
+        <button id="btnPreview">Beolvasás / elemzés</button>
+        <span class="muted" id="previewInfo"></span>
+      </div>
+    </div>
+
+    <div class="card" id="mapCard" style="display:none;">
+      <h3 style="margin-top:0;">Oszlopok beállítása az első 5 sor mintája alapján</h3>
+      <div class="dir" id="dir-file">
+        <label><input type="radio" name="dirF" value="wgs2eov" checked> WGS84/ETRS89 → EOV</label>
+        <label><input type="radio" name="dirF" value="eov2wgs"> EOV → WGS84/ETRS89</label>
+      </div>
+      <div class="toolbar">
+        <div style="min-width:200px;">
+          <label>Elválasztó karakter</label>
+          <select id="delimSel">
+            <option value=",">vessző ( , )</option>
+            <option value=";">pontosvessző ( ; )</option>
+            <option value="&#9;">tab</option>
+            <option value=" ">szóköz</option>
+          </select>
+        </div>
+        <label class="grid-check"><input type="checkbox" id="hasHeader"> Első sor fejléc</label>
+        <label class="grid-check"><input type="checkbox" id="decComma"> Tizedesvessző (47,5)</label>
+        <button class="ghost" id="btnReparse">Újraelemzés</button>
+      </div>
+
+      <div style="overflow:auto;">
+        <table id="mapTable"></table>
+      </div>
+
+      <div class="toolbar">
+        <button id="btnImport">Tömeges átszámítás</button>
+        <span class="muted">Minden oszlophoz állítsd be a szerepét.</span>
+      </div>
+    </div>
+
+    <div class="card" id="resultCard" style="display:none;">
+      <div class="toolbar">
+        <span class="pill ok" id="okPill">0 sikeres</span>
+        <span class="pill err" id="errPill">0 hibás</span>
+        <button class="ghost" id="btnDownload">CSV letöltése</button>
+      </div>
+      <div style="overflow:auto;"><table id="resultTable"></table></div>
+      <div id="errBox"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+
+// ---- Tab váltás ----
+$$(".tab").forEach(t => t.onclick = () => {
+  $$(".tab").forEach(x => x.classList.remove("active"));
+  $$(".panel").forEach(x => x.classList.remove("active"));
+  t.classList.add("active");
+  $("#panel-" + t.dataset.tab).classList.add("active");
+});
+
+// ======================= KÉZI BEVITEL =======================
+function manualDir(){ return document.querySelector('input[name="dirM"]:checked').value; }
+function updateManualLabels(){
+  const w = manualDir() === "wgs2eov";
+  $("#lblMa").textContent = w ? "Szélesség φ (lat)" : "Y — Kelet [m]";
+  $("#lblMb").textContent = w ? "Hosszúság λ (lon)" : "X — Észak [m]";
+  $("#lblMc").textContent = w ? "h — ellipszoidi magasság (opc.)" : "H — Balti magasság (opc.)";
+}
+$$('input[name="dirM"]').forEach(r => r.onchange = updateManualLabels);
+updateManualLabels();
+
+$("#btnSwap").onclick = () => {
+  const other = manualDir() === "wgs2eov" ? "eov2wgs" : "wgs2eov";
+  document.querySelector(`input[name="dirM"][value="${other}"]`).checked = true;
+  updateManualLabels();
+};
+
+$("#btnTransform").onclick = async () => {
+  const a = parseFloat($("#ma").value.replace(",", "."));
+  const b = parseFloat($("#mb").value.replace(",", "."));
+  const cRaw = $("#mc").value.trim();
+  const c = cRaw === "" ? null : parseFloat(cRaw.replace(",", "."));
+  if (isNaN(a) || isNaN(b)) { $("#manualResult").innerHTML =
+      '<span style="color:var(--err)">Hiányzó vagy hibás koordináta.</span>'; return; }
+  const res = await fetch("/api/transform", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({direction: manualDir(), a, b, c})
+  });
+  if (!res.ok){ $("#manualResult").innerHTML =
+      '<span style="color:var(--err)">Hiba: '+res.status+'</span>'; return; }
+  const d = await res.json();
+  $("#manualResult").innerHTML = Object.entries(d)
+    .map(([k,v]) => `<div><b>${k}</b> = ${typeof v==="number" ? v.toFixed(Math.abs(v)>=1?3:9) : v}</div>`)
+    .join("");
+};
+
+// ======================= FÁJL IMPORT =======================
+let RAWTEXT = "";
+
+$("#fileInput").onchange = e => {
+  const f = e.target.files[0]; if(!f) return;
+  const rd = new FileReader();
+  rd.onload = () => { RAWTEXT = rd.result; $("#pasteArea").value =
+      RAWTEXT.split(/\r?\n/).slice(0,8).join("\n"); };
+  rd.readAsText(f);
+};
+
+$("#btnPreview").onclick = async () => {
+  RAWTEXT = (RAWTEXT && $("#fileInput").files[0]) ? RAWTEXT : $("#pasteArea").value;
+  if (!RAWTEXT.trim()){ $("#previewInfo").textContent = "Nincs beolvasandó szöveg."; return; }
+  const res = await fetch("/api/preview", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({text: RAWTEXT})});
+  const d = await res.json();
+  $("#delimSel").value = d.delimiter;
+  $("#previewInfo").textContent =
+    `Felismert elválasztó: ${d.delimiter_name} · ${d.ncols} oszlop · ${d.nrows} sor`;
+  $("#mapCard").style.display = "block";
+  buildMapTable(d.sample, d.ncols);
+};
+
+$("#btnReparse").onclick = async () => {
+  const res = await fetch("/api/preview", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({text: RAWTEXT})});
+  // a felhasználó által választott elválasztóval újraparse-olunk kliensoldalon
+  reparseWithDelim();
+};
+
+function currentDelim(){ return $("#delimSel").value; }
+function splitLine(line, delim){
+  return delim === " " ? line.trim().split(/\s+/) : line.split(delim);
+}
+function sampleRows(){
+  const lines = RAWTEXT.split(/\r?\n/).filter(l => l.trim());
+  return lines.slice(0,5).map(l => splitLine(l, currentDelim()).map(s=>s.trim()));
+}
+function reparseWithDelim(){
+  const rows = sampleRows();
+  const ncols = Math.max(...rows.map(r=>r.length), 0);
+  buildMapTable(rows, ncols);
+}
+$("#delimSel").onchange = reparseWithDelim;
+$$('input[name="dirF"]').forEach(r => r.onchange = () => buildMapTable(sampleRows(),
+    Math.max(...sampleRows().map(r=>r.length),0)));
+
+function roleOptions(dir){
+  const coords = dir === "wgs2eov"
+    ? [["a","φ (lat)"],["b","λ (lon)"],["c","h magasság"]]
+    : [["a","Y (Kelet)"],["b","X (Észak)"],["c","H magasság"]];
+  return [["ignore","— kihagyás —"], ...coords, ["id","azonosító / megtartás"]];
+}
+
+function guessRoles(rows, ncols, dir){
+  // első adatsor (fejléc kihagyásával heurisztikusan)
+  const hdr = $("#hasHeader").checked ? 1 : 0;
+  const dataRow = rows[hdr] || rows[0] || [];
+  const nums = dataRow.map(v => {
+    const f = parseFloat(String(v).replace(",", "."));
+    return isNaN(f) ? null : f;
+  });
+  const roles = new Array(ncols).fill("ignore");
+  const numIdx = [];
+  for (let i=0;i<ncols;i++) if (nums[i]!==null) numIdx.push(i);
+  // nem-szám oszlopok -> azonosító
+  for (let i=0;i<ncols;i++) if (nums[i]===null && dataRow[i]!==undefined) roles[i]="id";
+  // első három szám -> a,b,c
+  if (numIdx[0]!==undefined) roles[numIdx[0]]="a";
+  if (numIdx[1]!==undefined) roles[numIdx[1]]="b";
+  if (numIdx[2]!==undefined) roles[numIdx[2]]="c";
+  return roles;
+}
+
+function buildMapTable(rows, ncols){
+  const dir = document.querySelector('input[name="dirF"]:checked').value;
+  const roles = guessRoles(rows, ncols, dir);
+  const opts = roleOptions(dir);
+  let html = "<thead><tr>";
+  for (let i=0;i<ncols;i++){
+    html += `<th>Oszlop ${i+1}<br><select data-col="${i}" class="roleSel">` +
+      opts.map(([v,l]) => `<option value="${v}" ${roles[i]===v?"selected":""}>${l}</option>`).join("") +
+      `</select></th>`;
+  }
+  html += "</tr></thead><tbody>";
+  rows.forEach(r => {
+    html += "<tr>" + Array.from({length:ncols}, (_,i)=>`<td>${r[i]??""}</td>`).join("") + "</tr>";
+  });
+  html += "</tbody>";
+  $("#mapTable").innerHTML = html;
+}
+
+let LASTRESULT = null;
+
+$("#btnImport").onclick = async () => {
+  const dir = document.querySelector('input[name="dirF"]:checked').value;
+  const sels = $$(".roleSel");
+  let col_a=null, col_b=null, col_c=null; const id_cols=[];
+  sels.forEach(s => {
+    const i = parseInt(s.dataset.col);
+    if (s.value==="a") col_a=i;
+    else if (s.value==="b") col_b=i;
+    else if (s.value==="c") col_c=i;
+    else if (s.value==="id") id_cols.push(i);
+  });
+  if (col_a===null || col_b===null){ alert("Jelöld ki mindkét koordináta-oszlopot."); return; }
+
+  const res = await fetch("/api/import", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({
+      text: RAWTEXT, delimiter: currentDelim(), direction: dir,
+      col_a, col_b, col_c, id_cols,
+      has_header: $("#hasHeader").checked, decimal_comma: $("#decComma").checked
+    })});
+  if (!res.ok){ alert("Hiba: "+res.status); return; }
+  const d = await res.json(); LASTRESULT = d;
+
+  $("#resultCard").style.display = "block";
+  $("#okPill").textContent = d.n_ok + " sikeres";
+  $("#errPill").textContent = d.n_err + " hibás";
+  let html = "<thead><tr>" + d.columns.map(c=>`<th>${c}</th>`).join("") + "</tr></thead><tbody>";
+  d.rows.slice(0,200).forEach(r => html += "<tr>"+r.map(v=>`<td>${v}</td>`).join("")+"</tr>");
+  html += "</tbody>";
+  $("#resultTable").innerHTML = html;
+  $("#errBox").innerHTML = d.n_err
+    ? `<p class="muted" style="margin-top:12px;">Hibás sorok (max 50): `+
+      d.errors.map(e=>`#${e.row} (${e.reason})`).join(", ")+`</p>` : "";
+};
+
+$("#btnDownload").onclick = () => {
+  if (!LASTRESULT) return;
+  const head = LASTRESULT.columns.join(";");
+  const body = LASTRESULT.rows.map(r => r.join(";")).join("\n");
+  const blob = new Blob([head+"\n"+body], {type:"text/csv;charset=utf-8"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = "vitel_eredmeny.csv"; a.click();
+};
+</script>
+</body>
+</html>

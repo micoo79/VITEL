@@ -1,0 +1,26 @@
+{
+  "geoid": {
+    "file": "geoid.f32",
+    "rows": 186,
+    "cols": 268,
+    "lon0": 16.1,
+    "lat0": 48.89,
+    "dlon": 0.026,
+    "dlat": 0.018,
+    "nodata": -1000.0,
+    "_desc": "N geoid-undulacio [m], sor 0 = legfelso (lat0)"
+  },
+  "hd72": {
+    "file": "hd72.f32",
+    "bands": 2,
+    "rows": 121,
+    "cols": 251,
+    "lon0": 16.1111111111111,
+    "lat0": 48.8888888888889,
+    "dlon": 0.027777777777777776,
+    "dlat": 0.027777777777777776,
+    "band0": "Dlat_arcsec",
+    "band1": "Dlon_arcsec",
+    "_desc": "HD72->ETRF2000 eltolas ivmasodpercben; ETRF->HD72 = -ertek"
+  }
+}
