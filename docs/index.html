@@ -55,7 +55,11 @@
   .toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:14px 0; }
   footer { color:var(--muted); font-size:12px; text-align:center; padding:18px; }
   footer a { color:var(--accent); }
+  #dxfMap { height:420px; border-radius:10px; border:1px solid var(--line); margin-top:14px; display:none; }
+  .leaflet-popup-content { color:#0b1220; }
 </style>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body>
 <header>
@@ -166,10 +170,15 @@
         <label class="grid-check"><input type="checkbox" id="optSwap"> EOV X/Y felcserélése</label>
       </div>
       <div class="toolbar">
-        <button id="btnDxf">Konvertálás KML-be</button>
+        <button id="btnDxf">Konvertálás + előnézet</button>
         <span class="muted" id="dxfInfo"></span>
       </div>
       <div class="result" id="dxfResult" style="display:none;"></div>
+      <div id="dxfMap"></div>
+      <div class="toolbar" id="dxfSaveBar" style="display:none;">
+        <button id="btnSaveKml">KML mentése</button>
+        <span class="muted">Nézd meg az előnézetet a térképen, majd mentsd a KML-t.</span>
+      </div>
     </div>
   </section>
 </main>
@@ -181,7 +190,7 @@
 
 <script type="module">
 import { EOV } from './eov.js';
-import { parseDxf, toKml } from './dxf2kml.js';
+import { parseDxf, toKml, toGeoJSON } from './dxf2kml.js';
 
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
@@ -400,16 +409,30 @@ $("#dxfInput").onchange = e => {
   rd.onload = () => { DXFTEXT = rd.result; $("#dxfInfo").textContent = `Betöltve: ${f.name}`; };
   rd.readAsText(f);
 };
+let DXFKML = null, dxfMap = null, dxfLayer = null;
+
+function ensureMap(){
+  if (dxfMap) return dxfMap;
+  const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    { maxZoom: 19, attribution: "© OpenStreetMap" });
+  const sat = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    { maxZoom: 19, attribution: "Tiles © Esri — World Imagery" });
+  dxfMap = L.map("dxfMap", { layers: [sat] }).setView([47.16, 19.5], 7);
+  L.control.layers({ "Műholdkép (Esri)": sat, "Térkép (OSM)": osm }).addTo(dxfMap);
+  return dxfMap;
+}
+
 $("#btnDxf").onclick = () => {
   if (!EOVENG) return;
   if (!DXFTEXT.trim()){ $("#dxfInfo").textContent = "Előbb válassz DXF fájlt."; return; }
   let parsed;
   try { parsed = parseDxf(DXFTEXT); }
   catch(e){ $("#dxfInfo").textContent = "Nem olvasható DXF: " + e.message; return; }
-  const { kml, stats } = toKml(parsed, EOVENG, {
+  const { kml, features, stats } = toKml(parsed, EOVENG, {
     points: $("#optPoints").checked, labels: $("#optLabels").checked,
     swapXY: $("#optSwap").checked, name: DXFNAME,
   });
+  DXFKML = kml;
   const skippedT = Object.entries(stats.skippedTypes || {})
     .map(([k,v]) => `${k}×${v}`).join(", ") || "nincs";
   $("#dxfResult").style.display = "block";
@@ -420,8 +443,31 @@ $("#btnDxf").onclick = () => {
     `<div class="muted">Rácson kívül emiatt kihagyva: ${stats.skippedRange} elem</div>` +
     `<div class="muted">Nem KML-be illő, kihagyott típusok: ${skippedT}</div>`;
   $("#dxfInfo").textContent = "";
+
+  if (!features.length){
+    $("#dxfInfo").textContent = "Nincs megjeleníthető (érvényes) elem.";
+    $("#dxfMap").style.display = "none"; $("#dxfSaveBar").style.display = "none";
+    return;
+  }
+  // Térkép-előnézet
+  $("#dxfMap").style.display = "block";
+  const map = ensureMap();
+  setTimeout(() => map.invalidateSize(), 50);   // a most megjelent div mérete
+  if (dxfLayer) map.removeLayer(dxfLayer);
+  dxfLayer = L.geoJSON(toGeoJSON(features), {
+    style: { color: "#38bdf8", weight: 2, fillOpacity: 0.15 },
+    pointToLayer: (f, latlng) => L.circleMarker(latlng,
+      { radius: 4, color: "#f59e0b", weight: 2, fillOpacity: 0.9 }),
+    onEachFeature: (f, lyr) => { if (f.properties && f.properties.name) lyr.bindPopup(f.properties.name); },
+  }).addTo(map);
+  try { map.fitBounds(dxfLayer.getBounds(), { padding: [25, 25], maxZoom: 18 }); } catch(_){}
+  $("#dxfSaveBar").style.display = "flex";
+};
+
+$("#btnSaveKml").onclick = () => {
+  if (!DXFKML) return;
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([kml], {type:"application/vnd.google-earth.kml+xml"}));
+  a.href = URL.createObjectURL(new Blob([DXFKML], {type:"application/vnd.google-earth.kml+xml"}));
   a.download = DXFNAME + ".kml"; a.click();
 };
 </script>
