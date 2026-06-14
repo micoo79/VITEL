@@ -57,6 +57,9 @@
   footer a { color:var(--accent); }
   #dxfMap { height:420px; border-radius:10px; border:1px solid var(--line); margin-top:14px; display:none; }
   .leaflet-popup-content { color:#0b1220; }
+  .leaflet-tooltip.dxf-label { background:rgba(0,0,0,.65); color:#fff; border:0;
+        box-shadow:none; font-weight:600; padding:1px 6px; white-space:nowrap; }
+  .leaflet-tooltip.dxf-label::before { display:none; }
 </style>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -455,10 +458,19 @@ $("#btnDxf").onclick = () => {
   setTimeout(() => map.invalidateSize(), 50);   // a most megjelent div mérete
   if (dxfLayer) map.removeLayer(dxfLayer);
   dxfLayer = L.geoJSON(toGeoJSON(features), {
-    style: { color: "#38bdf8", weight: 2, fillOpacity: 0.15 },
-    pointToLayer: (f, latlng) => L.circleMarker(latlng,
-      { radius: 4, color: "#f59e0b", weight: 2, fillOpacity: 0.9 }),
-    onEachFeature: (f, lyr) => { if (f.properties && f.properties.name) lyr.bindPopup(f.properties.name); },
+    style: (f) => ({ color: f.properties.color || "#38bdf8", weight: 2,
+                     fillColor: f.properties.color || "#38bdf8", fillOpacity: 0.2 }),
+    pointToLayer: (f, latlng) => {
+      const col = f.properties.color || "#f59e0b";
+      if (f.properties.label) {
+        const m = L.circleMarker(latlng, { radius: 3, color: col, weight: 1, fillOpacity: 1 });
+        m.bindTooltip(f.properties.name, { permanent: true, direction: "right",
+          className: "dxf-label", offset: [6, 0] });
+        return m;
+      }
+      return L.circleMarker(latlng, { radius: 4, color: col, weight: 2, fillOpacity: 0.9 });
+    },
+    onEachFeature: (f, lyr) => { if (f.properties.name && !f.properties.label) lyr.bindPopup(f.properties.name); },
   }).addTo(map);
   try { map.fitBounds(dxfLayer.getBounds(), { padding: [25, 25], maxZoom: 18 }); } catch(_){}
   $("#dxfSaveBar").style.display = "flex";
