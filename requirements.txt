@@ -1,0 +1,2 @@
+# A mag-kod egyetlen fuggosege. A wheel hozza a PROJ 9.5.1+ konyvtarat is.
+pyproj>=3.7
