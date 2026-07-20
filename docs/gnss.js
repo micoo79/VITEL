@@ -150,7 +150,7 @@ export function requiredCheckCount(n) {
 }
 
 // A nyers SATLAB adatsor fix indexei (a "Tárolt pontok" fejléc szerint)
-const IX = { nev: 0, E: 1, K: 2, M: 3, dN: 19, dE: 20, dZ: 21, kezd: 49, veg: 50 };
+const IX = { nev: 0, E: 1, K: 2, M: 3, dN: 19, dE: 20, dZ: 21, hrms: 46, vrms: 47, kezd: 49, veg: 50, pdop: 57 };
 
 function parseTs(s) {
   const m = String(s).trim().match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)/);
@@ -176,6 +176,19 @@ function toDMS(deg, isLat) {
 const _sign = () => (Math.random() < 0.5 ? -1 : 1);
 const _offXY = () => _sign() * Math.round(Math.random() * 90) / 1000;        // ±0..0.090 m (mm)
 const _offZ = () => _sign() * (20 + Math.round(Math.random() * 30)) / 1000;   // ±0.020..0.050 m (mm)
+const _rng = (min, max) => min + Math.random() * (max - min);
+
+// geodéziai (WGS84) lat/lon/h -> ECEF X/Y/Z (m)
+function lla2ecef(latDeg, lonDeg, h) {
+  const a = 6378137, e2 = 0.00669437999014;
+  const phi = latDeg * Math.PI / 180, lam = lonDeg * Math.PI / 180, s = Math.sin(phi);
+  const Nr = a / Math.sqrt(1 - e2 * s * s);
+  return {
+    x: (Nr + h) * Math.cos(phi) * Math.cos(lam),
+    y: (Nr + h) * Math.cos(phi) * Math.sin(lam),
+    z: (Nr * (1 - e2) + h) * s,
+  };
+}
 
 /**
  * Ellenőrző mérés szimulálása.
@@ -201,6 +214,10 @@ export function buildControl(parsed, eov) {
   const T = raw.map(r => parseTs(r[IX.kezd]));
   const Vend = raw.map(r => parseTs(r[IX.veg]) ?? ((parseTs(r[IX.kezd]) ?? 0) + 2000));
 
+  // HRMS/VRMS/PDOP min–max az összes mért pontból (ezen belül randomizálunk)
+  const mm = (ix) => { const a = raw.map(r => parseFloat(r[ix])).filter(Number.isFinite); return [Math.min(...a), Math.max(...a)]; };
+  const [hMin, hMax] = mm(IX.hrms), [vMin, vMax] = mm(IX.vrms), [pMin, pMax] = mm(IX.pdop);
+
   const P = {}; parsed.columns.forEach((c, i) => (P[c] = i));
   const controlRows = [], comparison = [];
   let cursor = Vend[N - 1];                              // az utolsó mért pont után
@@ -215,10 +232,11 @@ export function buildControl(parsed, eov) {
     const K0 = parseFloat(raw[oi][IX.K]), E0 = parseFloat(raw[oi][IX.E]), M0 = parseFloat(raw[oi][IX.M]);
     const oK = _offXY(), oE = _offXY(), oM = _offZ();     // eltolások (m)
     const Kc = K0 + oK, Ec = E0 + oE, Mc = M0 + oM;
-    const w = eov.eovToWgs(Kc, Ec, Mc);                  // {lat, lon, h} — VITEL
+    const w = eov.eovToWgs(Kc, Ec, Mc);                  // {lat, lon, h} — VITEL (módosított)
+    const w0 = eov.eovToWgs(K0, E0, M0);                 // eredeti pozíció
 
     const name = `${1001 + k}_${raw[oi][IX.nev]}_ell`;
-    const row = parsed.points[oi].slice();               // többi adat az eredetiből
+    const row = parsed.points[oi].slice();               // a többi adat az eredetiből
     row[P["Név"]] = name;
     row[P["K"]] = Kc.toFixed(4);
     row[P["É"]] = Ec.toFixed(4);
@@ -227,15 +245,20 @@ export function buildControl(parsed, eov) {
     row[P["Helyi H"]] = toDMS(w.lon, false);
     row[P["Helyi M"]] = w.h.toFixed(4);
     row[P["KezdHelyi idő"]] = fmtTs(cStart);
+
+    // Új baseline vektor: eredeti baseline + a pont ECEF-elmozdulása (bázis változatlan)
+    const e0 = lla2ecef(w0.lat, w0.lon, w0.h), ec = lla2ecef(w.lat, w.lon, w.h);
+    row[P["Baseline Vector dN"]] = (parseFloat(raw[oi][IX.dN]) + (ec.x - e0.x)).toFixed(4);
+    row[P["Baseline Vector dE"]] = (parseFloat(raw[oi][IX.dE]) + (ec.y - e0.y)).toFixed(4);
+    row[P["Baseline Vector dZ"]] = (parseFloat(raw[oi][IX.dZ]) + (ec.z - e0.z)).toFixed(4);
+    // HRMS/VRMS/PDOP: a mért pontok min–max tartományában randomizálva
+    row[P["HRMS"]] = _rng(hMin, hMax).toFixed(4);
+    row[P["VRMS"]] = _rng(vMin, vMax).toFixed(4);
+    row[P["PDOP"]] = _rng(pMin, pMax).toFixed(3);
     controlRows.push(row);
 
-    const bN = parseFloat(raw[oi][IX.dN]), bE = parseFloat(raw[oi][IX.dE]), bZ = parseFloat(raw[oi][IX.dZ]);
-    const t_km = Math.sqrt(bN * bN + bE * bE + bZ * bZ) / 1000;
-    const E_cm = 5 * Math.sqrt(t_km);
-    const dY = oK * 100, dX = oE * 100, dZ = oM * 100;   // cm (Y=Kelet, X=Észak)
-    const dP = Math.sqrt(dY * dY + dX * dX);             // vízszintes eltérés (cm)
-    const ok = dP <= E_cm && Math.abs(dZ) <= E_cm;
-    comparison.push({ orig: raw[oi][IX.nev], ell: name, dY, dX, dZ, dP, t: t_km, E: E_cm, ok });
+    const dY = oK * 100, dX = oE * 100, dZ = oM * 100;   // cm (Y=Kelet, X=Észak, Z=magasság)
+    comparison.push({ orig: raw[oi][IX.nev], ell: name, dY, dX, dZ });
   }
 
   return { measured: N, required, checked: m, columns: parsed.columns, controlRows, comparison };

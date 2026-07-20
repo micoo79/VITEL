@@ -136,17 +136,44 @@ async function render(text) {
   PARSED = r;
   msg.className = "msg";
   msg.textContent = `Felismerve: ${r.manufacturer} · ${r.points.length} pont`;
+  await renderAll();
+}
 
+async function renderAll() {
+  const r = PARSED; if (!r) return;
   const gen = (r.meta.find(s => s.title === "Általános adatok") || { rows: [] }).rows;
   const findv = k => (gen.find(([kk]) => kk === k) || [])[1] || "";
   const sub = [r.title, findv("Dátum") ? "Dátum: " + findv("Dátum") : "", "Gyártó: " + r.manufacturer]
               .filter(Boolean).join(" · ");
-
   const metaHtml = r.meta.map(s => `
     <div class="meta-sec">
       <h3>${esc(s.title)}</h3>
       ${s.rows.map(([k, v]) => `<div class="kv"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`).join("")}
     </div>`).join("");
+
+  // Ellenőrző pontok generálása (a fő táblázatba folytatva) + összehasonlítás
+  const eov = await eovPromise;
+  let rows = r.points, ctrlHtml = "";
+  if (eov) {
+    const c = buildControl(r, eov);
+    rows = r.points.concat(c.controlRows);              // a mért pontok után folytatódnak
+    const cmp = c.comparison.map(x => `<tr>
+        <td class="txt">${esc(x.orig)}</td><td class="txt">${esc(x.ell)}</td>
+        <td>${x.dY.toFixed(1)}</td><td>${x.dX.toFixed(1)}</td><td>${x.dZ.toFixed(1)}</td></tr>`).join("");
+    ctrlHtml = `
+      <div class="sec-title">GNSS ellenőrző mérés</div>
+      <div class="sum">Mért pontok: <b>${c.measured}</b> · Szükséges ellenőrzendő pontok (táblázat): <b>${c.required}</b> · Ellenőrzött pontok: <b>${c.checked}</b></div>
+      <table class="cmp">
+        <thead><tr>
+          <th class="txt">Eredeti pont</th><th class="txt">Ellenőrző pont</th>
+          <th>dY [cm]</th><th>dX [cm]</th><th>dZ [cm]</th>
+        </tr></thead>
+        <tbody>${cmp}</tbody>
+      </table>`;
+  } else {
+    ctrlHtml = `<div class="sec-title">GNSS ellenőrző mérés</div>
+      <div class="sum" style="color:#c62020">A rácsok nem töltődtek be, az ellenőrző pontok nem generálhatók.</div>`;
+  }
 
   $("#report").innerHTML = `
     <div class="rep-head">
@@ -155,47 +182,14 @@ async function render(text) {
     </div>
     <div class="meta-grid">${metaHtml}</div>
     <div class="pts-title">Mért pontok (${r.points.length})</div>
-    ${pointsTable(r.columns, r.points)}
-    <div id="ctrl"></div>`;
+    ${pointsTable(r.columns, rows)}
+    ${ctrlHtml}`;
   $("#report").className = "show";
   $("#btnPrint").disabled = false;
-  await renderControl();
+  $("#btnRegen").disabled = !eov;
 }
 
-async function renderControl() {
-  const box = $("#ctrl"); if (!box || !PARSED) return;
-  const eov = await eovPromise;
-  if (!eov) { box.innerHTML = `<div class="sec-title">GNSS ellenőrző mérés</div>
-     <div class="sum" style="color:#c62020">A rácsok nem töltődtek be, a Helyi Sz/H/M nem számítható.</div>`;
-     $("#btnRegen").disabled = false; return; }
-
-  const c = buildControl(PARSED, eov);
-  const cmp = c.comparison.map(x => `<tr>
-      <td class="txt">${esc(x.orig)}</td><td class="txt">${esc(x.ell)}</td>
-      <td>${x.dY.toFixed(1)}</td><td>${x.dX.toFixed(1)}</td><td>${x.dZ.toFixed(1)}</td>
-      <td>${x.dP.toFixed(1)}</td><td>${x.t.toFixed(3)}</td><td>${x.E.toFixed(2)}</td>
-      <td class="${x.ok ? "ok" : "bad"}">${x.ok ? "Megfelel" : "Nem felel"}</td></tr>`).join("");
-  const nOk = c.comparison.filter(x => x.ok).length;
-
-  box.innerHTML = `
-    <div class="sec-title">GNSS ellenőrző mérés</div>
-    <div class="sum">Mért pontok: <b>${c.measured}</b> · Szükséges ellenőrzendő pontok (táblázat): <b>${c.required}</b>
-       · Ellenőrzött pontok: <b>${c.checked}</b> · Megfelel: <b class="ok">${nOk}</b> / Nem felel: <b class="bad">${c.checked - nOk}</b></div>
-    <div class="pts-title">Ellenőrző mérés pontjai (${c.checked})</div>
-    ${pointsTable(c.columns, c.controlRows)}
-    <div class="pts-title">Összehasonlítás — eltérések és tűrés (E = 5·√t, t = bázisvonal km)</div>
-    <table class="cmp">
-      <thead><tr>
-        <th class="txt">Eredeti pont</th><th class="txt">Ellenőrző pont</th>
-        <th>dY [cm]</th><th>dX [cm]</th><th>dZ [cm]</th><th>Vízsz. elt. [cm]</th>
-        <th>t [km]</th><th>E [cm]</th><th class="txt">Eredmény</th>
-      </tr></thead>
-      <tbody>${cmp}</tbody>
-    </table>`;
-  $("#btnRegen").disabled = false;
-}
-
-$("#btnRegen").onclick = () => renderControl();
+$("#btnRegen").onclick = () => renderAll();
 $("#btnPrint").onclick = () => window.print();
 </script>
 </body>
