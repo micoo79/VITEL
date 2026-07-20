@@ -112,7 +112,7 @@ export function parseSatlab(text) {
   for (let i = 0; i < lines.length; i++) {
     if (lines[i].includes("Baseline Vector dN") && /(^|\s)Név(\s|$)/.test(lines[i])) { hdr = i; break; }
   }
-  const points = [];
+  const points = [], pointsRaw = [];
   if (hdr >= 0) {
     for (let i = hdr + 1; i < lines.length; i++) {
       const ln = lines[i];
@@ -122,6 +122,7 @@ export function parseSatlab(text) {
       const a = ln.split(",");
       if (a.length < 58) continue;                       // nem ervenyes adatsor
       points.push(SATLAB_COLUMNS.map(([, idx]) => (a[idx] ?? "").trim()));
+      pointsRaw.push(a);
     }
   }
 
@@ -130,8 +131,114 @@ export function parseSatlab(text) {
     title: firstLine,
     meta,
     columns: SATLAB_COLUMNS.map(([label]) => label),
+    colIndex: Object.fromEntries(SATLAB_COLUMNS.map(([l, i]) => [l, i])),
     points,
+    pointsRaw,
   };
+}
+
+// ===========================================================================
+//  ELLENŐRZÉSI JEGYZŐKÖNYV  —  ellenőrző pontok generálása + összehasonlítás
+// ===========================================================================
+
+// Mért pontok darabszáma -> vizsgálandó (ellenőrzendő) pontok száma.
+export function requiredCheckCount(n) {
+  const T = [[50, 15], [100, 20], [200, 30], [320, 40], [500, 55], [800, 75],
+             [1200, 115], [3200, 150], [8000, 225], [20000, 300], [100000, 450]];
+  for (const [mx, r] of T) if (n <= mx) return r;
+  return 750;
+}
+
+// A nyers SATLAB adatsor fix indexei (a "Tárolt pontok" fejléc szerint)
+const IX = { nev: 0, E: 1, K: 2, M: 3, dN: 19, dE: 20, dZ: 21, kezd: 49, veg: 50 };
+
+function parseTs(s) {
+  const m = String(s).trim().match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)/);
+  if (!m) return null;
+  return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], 0) + Math.round(parseFloat(m[6]) * 1000);
+}
+function fmtTs(ms) {
+  const d = new Date(ms), p = (x, n = 2) => String(x).padStart(n, "0");
+  const sec = (d.getUTCSeconds() + d.getUTCMilliseconds() / 1000).toFixed(1).padStart(4, "0");
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ` +
+         `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${sec}`;
+}
+// tizedes fok -> "DD:MM:SS.sssss" + féltekejel (a SATLAB formátum szerint)
+function toDMS(deg, isLat) {
+  const hemi = isLat ? (deg < 0 ? "S" : "N") : (deg < 0 ? "W" : "E");
+  let a = Math.abs(deg), d = Math.floor(a), mf = (a - d) * 60, mi = Math.floor(mf);
+  let ss = Math.round((mf - mi) * 60 * 1e5) / 1e5;
+  if (ss >= 60) { ss -= 60; mi += 1; }
+  if (mi >= 60) { mi -= 60; d += 1; }
+  return `${d}:${String(mi).padStart(2, "0")}:${ss.toFixed(5).padStart(8, "0")}${hemi}`;
+}
+
+const _sign = () => (Math.random() < 0.5 ? -1 : 1);
+const _offXY = () => _sign() * Math.round(Math.random() * 90) / 1000;        // ±0..0.090 m (mm)
+const _offZ = () => _sign() * (20 + Math.round(Math.random() * 30)) / 1000;   // ±0.020..0.050 m (mm)
+
+/**
+ * Ellenőrző mérés szimulálása.
+ *   - a mért pontszám alapján kiválasztja a vizsgálandó darabszámot (táblázat),
+ *   - random pontokat választ, visszafelé (utolsótól) haladva "újraméri" őket,
+ *   - K/É ±0–9 cm, M ±2–5 cm (mm) random eltolás,
+ *   - a rögzítési időket az eredeti időközökből, az utolsó pont után generálja,
+ *   - Helyi Sz/H/M = VITEL (eov.eovToWgs) a módosított K,É,M-ből,
+ *   - dY/dX/dZ összehasonlítás + E = 5·√t tűrés (t = GNSS bázisvonal km).
+ * @param parsed  a parseSatlab kimenete
+ * @param eov     betöltött EOV motor (eov.eovToWgs)
+ */
+export function buildControl(parsed, eov) {
+  const raw = parsed.pointsRaw, N = raw.length;
+  const required = requiredCheckCount(N);
+  const m = Math.min(required, N);
+
+  const idx = [...Array(N).keys()];
+  for (let i = idx.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [idx[i], idx[j]] = [idx[j], idx[i]]; }
+  const sel = idx.slice(0, m).sort((a, b) => a - b);   // eredeti sorrend
+  const rev = [...sel].reverse();                       // utolsótól visszafelé
+
+  const T = raw.map(r => parseTs(r[IX.kezd]));
+  const Vend = raw.map(r => parseTs(r[IX.veg]) ?? ((parseTs(r[IX.kezd]) ?? 0) + 2000));
+
+  const P = {}; parsed.columns.forEach((c, i) => (P[c] = i));
+  const controlRows = [], comparison = [];
+  let cursor = Vend[N - 1];                              // az utolsó mért pont után
+
+  for (let k = 0; k < rev.length; k++) {
+    const oi = rev[k];
+    const travel = k === 0 ? (T[N - 1] - T[oi]) : (T[rev[k - 1]] - T[oi]);
+    cursor += Math.max(0, travel || 0);
+    const cStart = cursor;
+    cursor += Math.max(1000, (Vend[oi] - T[oi]) || 2000);
+
+    const K0 = parseFloat(raw[oi][IX.K]), E0 = parseFloat(raw[oi][IX.E]), M0 = parseFloat(raw[oi][IX.M]);
+    const oK = _offXY(), oE = _offXY(), oM = _offZ();     // eltolások (m)
+    const Kc = K0 + oK, Ec = E0 + oE, Mc = M0 + oM;
+    const w = eov.eovToWgs(Kc, Ec, Mc);                  // {lat, lon, h} — VITEL
+
+    const name = `${1001 + k}_${raw[oi][IX.nev]}_ell`;
+    const row = parsed.points[oi].slice();               // többi adat az eredetiből
+    row[P["Név"]] = name;
+    row[P["K"]] = Kc.toFixed(4);
+    row[P["É"]] = Ec.toFixed(4);
+    row[P["M"]] = Mc.toFixed(4);
+    row[P["Helyi Sz"]] = toDMS(w.lat, true);
+    row[P["Helyi H"]] = toDMS(w.lon, false);
+    row[P["Helyi M"]] = w.h.toFixed(4);
+    row[P["KezdHelyi idő"]] = fmtTs(cStart);
+    controlRows.push(row);
+
+    const bN = parseFloat(raw[oi][IX.dN]), bE = parseFloat(raw[oi][IX.dE]), bZ = parseFloat(raw[oi][IX.dZ]);
+    const t_km = Math.sqrt(bN * bN + bE * bE + bZ * bZ) / 1000;
+    const E_cm = 5 * Math.sqrt(t_km);
+    const dY = oK * 100, dX = oE * 100, dZ = oM * 100;   // cm (Y=Kelet, X=Észak)
+    const dP = Math.sqrt(dY * dY + dX * dX);             // vízszintes eltérés (cm)
+    const ok = dP <= E_cm && Math.abs(dZ) <= E_cm;
+    comparison.push({ orig: raw[oi][IX.nev], ell: name, dY, dX, dZ, dP, t: t_km, E: E_cm, ok });
+  }
+
+  return { measured: N, required, checked: m, columns: parsed.columns, controlRows, comparison };
 }
 
 // Belepesi pont: gyarto felismerese + parse.
