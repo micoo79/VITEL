@@ -162,7 +162,7 @@ async function renderAll() {
         <td>${x.dY.toFixed(1)}</td><td>${x.dX.toFixed(1)}</td><td>${x.dZ.toFixed(1)}</td></tr>`).join("");
     ctrlHtml = `
       <div class="sec-title">GNSS ellenőrző mérés</div>
-      <div class="sum">Mért pontok: <b>${c.measured}</b> · Szükséges ellenőrzendő pontok (táblázat): <b>${c.required}</b> · Ellenőrzött pontok: <b>${c.checked}</b></div>
+      <div class="sum">Mért pontok: <b>${c.measured}</b> · Szükséges ellenőrzendő pontok: <b>${c.required}</b> · Ellenőrzött pontok: <b>${c.checked}</b></div>
       <table class="cmp">
         <thead><tr>
           <th class="txt">Eredeti pont</th><th class="txt">Ellenőrző pont</th>
@@ -181,7 +181,7 @@ async function renderAll() {
       <div class="sub">${esc(sub)}</div>
     </div>
     <div class="meta-grid">${metaHtml}</div>
-    <div class="pts-title">Mért pontok (${r.points.length})</div>
+    <div class="pts-title">Mért pontok</div>
     ${pointsTable(r.columns, rows)}
     ${ctrlHtml}`;
   $("#report").className = "show";
