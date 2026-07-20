@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VITEL — EOV ⇄ WGS84 transzformáció</title>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --line:#334155; --txt:#e2e8f0;
+          --muted:#94a3b8; --accent:#38bdf8; --ok:#22c55e; --err:#ef4444; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,Segoe UI,Roboto,sans-serif;
+         background:var(--bg); color:var(--txt); line-height:1.5; }
+  header { padding:18px 24px; border-bottom:1px solid var(--line); }
+  header h1 { margin:0; font-size:20px; }
+  header p { margin:4px 0 0; color:var(--muted); font-size:13px; }
+  main { max-width:1000px; margin:0 auto; padding:24px; }
+  #loader { padding:14px 18px; background:#0b1220; border:1px solid var(--line);
+            border-radius:10px; margin-bottom:18px; color:var(--muted); }
+  #loader.err { color:var(--err); border-color:var(--err); }
+  .tabs { display:flex; gap:8px; margin-bottom:20px; }
+  .tab { padding:10px 18px; background:var(--card); border:1px solid var(--line);
+         border-radius:8px; cursor:pointer; color:var(--muted); }
+  .tab.active { color:var(--txt); border-color:var(--accent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px;
+          padding:20px; margin-bottom:18px; }
+  .panel { display:none; } .panel.active { display:block; }
+  label { font-size:13px; color:var(--muted); display:block; margin-bottom:4px; }
+  input,select,textarea { width:100%; padding:9px 10px; background:#0b1220; color:var(--txt);
+          border:1px solid var(--line); border-radius:7px; font-size:14px;
+          font-family:inherit; }
+  .row { display:flex; gap:14px; flex-wrap:wrap; }
+  .row > div { flex:1; min-width:140px; }
+  .dir { display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap; }
+  .dir label { display:flex; align-items:center; gap:6px; color:var(--txt);
+          background:#0b1220; border:1px solid var(--line); padding:9px 14px;
+          border-radius:7px; cursor:pointer; margin:0; }
+  .dir input { width:auto; }
+  button { background:var(--accent); color:#06283d; border:0; padding:10px 18px;
+          border-radius:8px; font-weight:600; cursor:pointer; font-size:14px; }
+  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .result { margin-top:16px; padding:14px; background:#0b1220; border-radius:8px;
+          border:1px solid var(--line); font-family:ui-monospace,monospace; }
+  .muted { color:var(--muted); font-size:13px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; margin-top:10px;
+          display:block; overflow:auto; max-height:420px; }
+  th,td { border:1px solid var(--line); padding:6px 9px; text-align:left; white-space:nowrap; }
+  th { background:#0b1220; position:sticky; top:0; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:99px; font-size:12px;
+          background:#0b1220; border:1px solid var(--line); }
+  .pill.ok { color:var(--ok); border-color:var(--ok); }
+  .pill.err { color:var(--err); border-color:var(--err); }
+  .grid-check { display:flex; align-items:center; gap:6px; color:var(--txt); margin:0; }
+  .grid-check input { width:auto; }
+  .toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:14px 0; }
+  footer { color:var(--muted); font-size:12px; text-align:center; padding:18px; }
+  footer a { color:var(--accent); }
+  #dxfMap { height:420px; border-radius:10px; border:1px solid var(--line); margin-top:14px; display:none; }
+  .leaflet-popup-content { color:#0b1220; }
+  .leaflet-tooltip.dxf-label { background:rgba(0,0,0,.65); color:#fff; border:0;
+        box-shadow:none; font-weight:600; padding:1px 6px; white-space:nowrap; }
+  .leaflet-tooltip.dxf-label::before { display:none; }
+</style>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</head>
+<body>
+<header>
+  <p style="margin:0 0 6px;"><a href="./index.html" style="color:var(--accent);text-decoration:none;font-size:13px;">← Kezdőlap</a></p>
+  <h1>VITEL — EOV ⇄ WGS84 / ETRS89 transzformáció</h1>
+  <p>Centiméter-pontos magyar koordináta-átszámítás (HD72/EOV + Balti magasság) · BME javítórácsok · teljes egészében a böngészőben fut</p>
+</header>
+
+<main>
+  <div id="loader">Rácsok betöltése…</div>
+
+  <div class="tabs" style="display:none;" id="tabs">
+    <div class="tab active" data-tab="manual">Kézi bevitel</div>
+    <div class="tab" data-tab="file">Fájl import</div>
+    <div class="tab" data-tab="dxf">DXF → KML</div>
+  </div>
+
+  <!-- ============================ KÉZI ============================ -->
+  <section class="panel active" id="panel-manual">
+    <div class="card">
+      <div class="dir" id="dir-manual">
+        <label><input type="radio" name="dirM" value="wgs2eov" checked> WGS84/ETRS89 → EOV</label>
+        <label><input type="radio" name="dirM" value="eov2wgs"> EOV → WGS84/ETRS89</label>
+      </div>
+      <div class="row">
+        <div><label id="lblMa">Szélesség φ (lat)</label><input id="ma" type="text" placeholder="47.503933139"></div>
+        <div><label id="lblMb">Hosszúság λ (lon)</label><input id="mb" type="text" placeholder="19.047447408"></div>
+        <div><label id="lblMc">Magasság (opcionális)</label><input id="mc" type="text" placeholder="150.0"></div>
+      </div>
+      <div class="toolbar">
+        <button id="btnTransform">Átszámítás</button>
+        <button class="ghost" id="btnSwap">⇄ Irány csere</button>
+      </div>
+      <div class="result" id="manualResult"><span class="muted">Az eredmény itt jelenik meg.</span></div>
+    </div>
+  </section>
+
+  <!-- ============================ FÁJL ============================ -->
+  <section class="panel" id="panel-file">
+    <div class="card">
+      <div class="row">
+        <div>
+          <label>Fájl kiválasztása (.csv / .txt)</label>
+          <input id="fileInput" type="file" accept=".csv,.txt,text/*">
+        </div>
+      </div>
+      <p class="muted">…vagy illeszd be a szöveget közvetlenül:</p>
+      <textarea id="pasteArea" rows="4" placeholder="id;lat;lon&#10;P1;47,5039;19,0474"></textarea>
+      <div class="toolbar">
+        <button id="btnPreview">Beolvasás / elemzés</button>
+        <span class="muted" id="previewInfo"></span>
+      </div>
+    </div>
+
+    <div class="card" id="mapCard" style="display:none;">
+      <h3 style="margin-top:0;">Oszlopok beállítása az első 5 sor mintája alapján</h3>
+      <div class="dir" id="dir-file">
+        <label><input type="radio" name="dirF" value="wgs2eov" checked> WGS84/ETRS89 → EOV</label>
+        <label><input type="radio" name="dirF" value="eov2wgs"> EOV → WGS84/ETRS89</label>
+      </div>
+      <div class="toolbar">
+        <div style="min-width:200px;">
+          <label>Elválasztó karakter</label>
+          <select id="delimSel">
+            <option value=",">vessző ( , )</option>
+            <option value=";">pontosvessző ( ; )</option>
+            <option value="&#9;">tab</option>
+            <option value=" ">szóköz</option>
+          </select>
+        </div>
+        <label class="grid-check"><input type="checkbox" id="hasHeader"> Első sor fejléc</label>
+        <label class="grid-check"><input type="checkbox" id="decComma"> Tizedesvessző (47,5)</label>
+      </div>
+      <div style="overflow:auto;"><table id="mapTable"></table></div>
+      <div class="toolbar">
+        <button id="btnImport">Tömeges átszámítás</button>
+        <span class="muted">Minden oszlophoz állítsd be a szerepét.</span>
+      </div>
+    </div>
+
+    <div class="card" id="resultCard" style="display:none;">
+      <div class="toolbar">
+        <span class="pill ok" id="okPill">0 sikeres</span>
+        <span class="pill err" id="errPill">0 hibás</span>
+        <button class="ghost" id="btnDownload">CSV letöltése</button>
+      </div>
+      <div style="overflow:auto;"><table id="resultTable"></table></div>
+      <div id="errBox"></div>
+    </div>
+  </section>
+
+  <!-- ============================ DXF -> KML ============================ -->
+  <section class="panel" id="panel-dxf">
+    <div class="card">
+      <p class="muted" style="margin-top:0;">
+        A DXF-et <b>EOV koordinátarendszerben</b> értelmezi, és a fenti
+        transzformációval számolja át WGS84-re a KML-hez. A KML-ben nem
+        értelmezhető elemek (pl. SPLINE, HATCH, blokkok) kimaradnak — nem hibázik el.
+      </p>
+      <div class="row">
+        <div>
+          <label>DXF fájl kiválasztása (.dxf, ASCII)</label>
+          <input id="dxfInput" type="file" accept=".dxf,text/*">
+        </div>
+      </div>
+      <div class="toolbar">
+        <label class="grid-check"><input type="checkbox" id="optPoints" checked> Pont objektumok kellenek</label>
+        <label class="grid-check"><input type="checkbox" id="optLabels" checked> Feliratok (TEXT/MTEXT) kellenek</label>
+        <label class="grid-check"><input type="checkbox" id="optSwap"> EOV X/Y felcserélése</label>
+      </div>
+      <div class="toolbar">
+        <button id="btnDxf">Konvertálás + előnézet</button>
+        <span class="muted" id="dxfInfo"></span>
+      </div>
+      <div class="result" id="dxfResult" style="display:none;"></div>
+      <div id="dxfMap"></div>
+      <div class="toolbar" id="dxfSaveBar" style="display:none;">
+        <button id="btnSaveKml">KML mentése</button>
+        <span class="muted">Nézd meg az előnézetet a térképen, majd mentsd a KML-t.</span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  A teljes számítás a böngésződben történik (offline is). Forrás: BME Geodézia Tsz. javítórácsok ·
+  <a href="https://github.com/micoo79/VITEL">VITEL a GitHubon</a>
+</footer>
+
+<script type="module">
+import { EOV } from './eov.js';
+import { parseDxf, toKml, toGeoJSON } from './dxf2kml.js';
+
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+let EOVENG = null;
+
+// ---- Rácsok betöltése ----
+try {
+  EOVENG = await EOV.load('./grids/');
+  $("#loader").style.display = "none";
+  $("#tabs").style.display = "flex";
+} catch (e) {
+  $("#loader").className = "err";
+  $("#loader").textContent = "Hiba a rácsok betöltésekor: " + e.message;
+}
+
+// ---- Tabok ----
+$$(".tab").forEach(t => t.onclick = () => {
+  $$(".tab").forEach(x => x.classList.remove("active"));
+  $$(".panel").forEach(x => x.classList.remove("active"));
+  t.classList.add("active");
+  $("#panel-" + t.dataset.tab).classList.add("active");
+});
+
+// ---- Számformázás ----
+const fmt = (k, v) => {
+  if (typeof v !== "number") return v;
+  if (k === "lat" || k === "lon") return v.toFixed(9);
+  return v.toFixed(3);
+};
+const num = s => { const f = parseFloat(String(s).replace(",", ".")); return isNaN(f) ? null : f; };
+
+// ======================= KÉZI =======================
+function manualDir(){ return document.querySelector('input[name="dirM"]:checked').value; }
+function updateManualLabels(){
+  const w = manualDir() === "wgs2eov";
+  $("#lblMa").textContent = w ? "Szélesség φ (lat)" : "Y — Kelet [m]";
+  $("#lblMb").textContent = w ? "Hosszúság λ (lon)" : "X — Észak [m]";
+  $("#lblMc").textContent = w ? "h — ellipszoidi magasság (opc.)" : "H — Balti magasság (opc.)";
+}
+$$('input[name="dirM"]').forEach(r => r.onchange = updateManualLabels);
+updateManualLabels();
+$("#btnSwap").onclick = () => {
+  const other = manualDir() === "wgs2eov" ? "eov2wgs" : "wgs2eov";
+  document.querySelector(`input[name="dirM"][value="${other}"]`).checked = true;
+  updateManualLabels();
+};
+$("#btnTransform").onclick = () => {
+  if (!EOVENG) return;
+  const a = num($("#ma").value), b = num($("#mb").value);
+  const cRaw = $("#mc").value.trim(); const c = cRaw === "" ? null : num(cRaw);
+  if (a === null || b === null){ $("#manualResult").innerHTML =
+      '<span style="color:var(--err)">Hiányzó vagy hibás koordináta.</span>'; return; }
+  try {
+    const d = manualDir() === "wgs2eov" ? EOVENG.wgsToEov(a, b, c) : EOVENG.eovToWgs(a, b, c);
+    $("#manualResult").innerHTML = Object.entries(d)
+      .map(([k,v]) => `<div><b>${k}</b> = ${fmt(k,v)}</div>`).join("");
+  } catch(e){ $("#manualResult").innerHTML = '<span style="color:var(--err)">'+e.message+'</span>'; }
+};
+
+// ======================= FÁJL =======================
+let RAWTEXT = "";
+
+function splitLine(line, delim){
+  return delim === " " ? line.trim().split(/\s+/) : line.split(delim);
+}
+function detectDelimiter(text){
+  const lines = text.split(/\r?\n/).filter(l => l.trim()).slice(0,20);
+  if (!lines.length) return ",";
+  const cands = [";", ",", "\t", " "]; let best = null;
+  cands.forEach((delim, prio) => {
+    const counts = lines.map(l => splitLine(l, delim).length);
+    if (Math.min(...counts) > 1 && new Set(counts).size === 1){
+      const cand = [counts[0], -prio, delim];
+      if (!best || cand[0] > best[0] || (cand[0] === best[0] && cand[1] > best[1])) best = cand;
+    }
+  });
+  return best ? best[2] : ",";
+}
+const delimName = d => ({",":"vessző",";":"pontosvessző","\t":"tab"," ":"szóköz"}[d] || d);
+
+$("#fileInput").onchange = e => {
+  const f = e.target.files[0]; if(!f) return;
+  const rd = new FileReader();
+  rd.onload = () => { RAWTEXT = rd.result;
+    $("#pasteArea").value = RAWTEXT.split(/\r?\n/).slice(0,8).join("\n"); };
+  rd.readAsText(f);
+};
+
+$("#btnPreview").onclick = () => {
+  RAWTEXT = ($("#fileInput").files[0] && RAWTEXT) ? RAWTEXT : $("#pasteArea").value;
+  if (!RAWTEXT.trim()){ $("#previewInfo").textContent = "Nincs beolvasandó szöveg."; return; }
+  const d = detectDelimiter(RAWTEXT);
+  $("#delimSel").value = d;
+  const rows = sampleRows();
+  const ncols = Math.max(...rows.map(r => r.length), 0);
+  $("#previewInfo").textContent =
+    `Felismert elválasztó: ${delimName(d)} · ${ncols} oszlop · ${RAWTEXT.split(/\r?\n/).filter(l=>l.trim()).length} sor`;
+  $("#mapCard").style.display = "block";
+  buildMapTable(rows, ncols);
+};
+
+function currentDelim(){ return $("#delimSel").value; }
+function sampleRows(){
+  return RAWTEXT.split(/\r?\n/).filter(l => l.trim()).slice(0,5)
+    .map(l => splitLine(l, currentDelim()).map(s => s.trim()));
+}
+function rebuild(){ const r = sampleRows(); buildMapTable(r, Math.max(...r.map(x=>x.length),0)); }
+$("#delimSel").onchange = rebuild;
+$$('input[name="dirF"]').forEach(r => r.onchange = rebuild);
+$("#hasHeader").onchange = rebuild;
+
+function roleOptions(dir){
+  const c = dir === "wgs2eov"
+    ? [["a","φ (lat)"],["b","λ (lon)"],["c","h magasság"]]
+    : [["a","Y (Kelet)"],["b","X (Észak)"],["c","H magasság"]];
+  return [["ignore","— kihagyás —"], ...c, ["id","azonosító / megtartás"]];
+}
+function guessRoles(rows, ncols){
+  const hdr = $("#hasHeader").checked ? 1 : 0;
+  const dataRow = rows[hdr] || rows[0] || [];
+  const nums = dataRow.map(num);
+  const roles = new Array(ncols).fill("ignore"); const ni = [];
+  for (let i=0;i<ncols;i++) if (nums[i] !== null) ni.push(i);
+  for (let i=0;i<ncols;i++) if (nums[i] === null && dataRow[i] !== undefined) roles[i] = "id";
+  if (ni[0] !== undefined) roles[ni[0]] = "a";
+  if (ni[1] !== undefined) roles[ni[1]] = "b";
+  if (ni[2] !== undefined) roles[ni[2]] = "c";
+  return roles;
+}
+function buildMapTable(rows, ncols){
+  const dir = document.querySelector('input[name="dirF"]:checked').value;
+  const roles = guessRoles(rows, ncols); const opts = roleOptions(dir);
+  let html = "<thead><tr>";
+  for (let i=0;i<ncols;i++){
+    html += `<th>Oszlop ${i+1}<br><select data-col="${i}" class="roleSel">` +
+      opts.map(([v,l]) => `<option value="${v}" ${roles[i]===v?"selected":""}>${l}</option>`).join("") +
+      `</select></th>`;
+  }
+  html += "</tr></thead><tbody>";
+  rows.forEach(r => html += "<tr>" + Array.from({length:ncols},(_,i)=>`<td>${r[i]??""}</td>`).join("") + "</tr>");
+  html += "</tbody>";
+  $("#mapTable").innerHTML = html;
+}
+
+let LASTRESULT = null;
+$("#btnImport").onclick = () => {
+  if (!EOVENG) return;
+  const dir = document.querySelector('input[name="dirF"]:checked').value;
+  let col_a=null, col_b=null, col_c=null; const id_cols=[];
+  $$(".roleSel").forEach(s => {
+    const i = parseInt(s.dataset.col);
+    if (s.value==="a") col_a=i; else if (s.value==="b") col_b=i;
+    else if (s.value==="c") col_c=i; else if (s.value==="id") id_cols.push(i);
+  });
+  if (col_a===null || col_b===null){ alert("Jelöld ki mindkét koordináta-oszlopot."); return; }
+
+  const dc = $("#decComma").checked;
+  const parse = s => { let t = String(s ?? "").trim();
+    if (dc) t = t.replace(/\s/g,"").replace(",","."); else t = t.replace(",",".");
+    const f = parseFloat(t); return isNaN(f) ? null : f; };
+
+  const lines = RAWTEXT.split(/\r?\n/).filter(l => l.trim());
+  const all = lines.map(l => splitLine(l, currentDelim()).map(s => s.trim()));
+  const header = $("#hasHeader").checked ? all[0] : null;
+  const data = $("#hasHeader").checked ? all.slice(1) : all;
+
+  const coordCols = dir === "wgs2eov"
+    ? ["Y","X", ...(col_c!==null?["H"]:[])]
+    : ["lat","lon", ...(col_c!==null?["h"]:[])];
+  const idNames = id_cols.map(i => (header && header[i]) ? header[i] : `oszlop_${i+1}`);
+  const columns = [...idNames, ...coordCols];
+
+  const out = []; const errors = [];
+  data.forEach((r, n) => {
+    const cell = i => (i>=0 && i<r.length) ? r[i] : "";
+    const a = parse(cell(col_a)), b = parse(cell(col_b));
+    const c = col_c!==null ? parse(cell(col_c)) : null;
+    const pass = id_cols.map(i => cell(i));
+    if (a===null || b===null || (col_c!==null && c===null)){
+      errors.push({row:n+1, reason:"nem szám a koordináta-oszlopban"});
+      out.push([...pass, ...coordCols.map(()=> "")]); return;
+    }
+    try {
+      const res = dir === "wgs2eov" ? EOVENG.wgsToEov(a,b,c) : EOVENG.eovToWgs(a,b,c);
+      const vals = Object.entries(res).map(([k,v]) => fmt(k,v));
+      out.push([...pass, ...vals]);
+    } catch(e){ errors.push({row:n+1, reason:e.message}); out.push([...pass, ...coordCols.map(()=> "")]); }
+  });
+
+  LASTRESULT = { columns, rows: out };
+  $("#resultCard").style.display = "block";
+  $("#okPill").textContent = (data.length - errors.length) + " sikeres";
+  $("#errPill").textContent = errors.length + " hibás";
+  let html = "<thead><tr>" + columns.map(c=>`<th>${c}</th>`).join("") + "</tr></thead><tbody>";
+  out.slice(0,200).forEach(r => html += "<tr>"+r.map(v=>`<td>${v}</td>`).join("")+"</tr>");
+  $("#resultTable").innerHTML = html + "</tbody>";
+  $("#errBox").innerHTML = errors.length
+    ? `<p class="muted" style="margin-top:12px;">Hibás sorok (max 50): `+
+      errors.slice(0,50).map(e=>`#${e.row} (${e.reason})`).join(", ")+`</p>` : "";
+};
+
+$("#btnDownload").onclick = () => {
+  if (!LASTRESULT) return;
+  const csv = [LASTRESULT.columns.join(";"), ...LASTRESULT.rows.map(r => r.join(";"))].join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], {type:"text/csv;charset=utf-8"}));
+  a.download = "vitel_eredmeny.csv"; a.click();
+};
+
+// ======================= DXF -> KML =======================
+let DXFTEXT = "", DXFNAME = "export";
+$("#dxfInput").onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  DXFNAME = f.name.replace(/\.[^.]+$/, "");
+  const rd = new FileReader();
+  rd.onload = () => { DXFTEXT = rd.result; $("#dxfInfo").textContent = `Betöltve: ${f.name}`; };
+  rd.readAsText(f);
+};
+let DXFKML = null, dxfMap = null, dxfLayer = null;
+
+function ensureMap(){
+  if (dxfMap) return dxfMap;
+  const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    { maxZoom: 19, attribution: "© OpenStreetMap" });
+  const sat = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    { maxZoom: 19, attribution: "Tiles © Esri — World Imagery" });
+  dxfMap = L.map("dxfMap", { layers: [sat] }).setView([47.16, 19.5], 7);
+  L.control.layers({ "Műholdkép (Esri)": sat, "Térkép (OSM)": osm }).addTo(dxfMap);
+  return dxfMap;
+}
+
+$("#btnDxf").onclick = () => {
+  if (!EOVENG) return;
+  if (!DXFTEXT.trim()){ $("#dxfInfo").textContent = "Előbb válassz DXF fájlt."; return; }
+  let parsed;
+  try { parsed = parseDxf(DXFTEXT); }
+  catch(e){ $("#dxfInfo").textContent = "Nem olvasható DXF: " + e.message; return; }
+  const { kml, features, stats } = toKml(parsed, EOVENG, {
+    points: $("#optPoints").checked, labels: $("#optLabels").checked,
+    swapXY: $("#optSwap").checked, name: DXFNAME,
+  });
+  DXFKML = kml;
+  const skippedT = Object.entries(stats.skippedTypes || {})
+    .map(([k,v]) => `${k}×${v}`).join(", ") || "nincs";
+  $("#dxfResult").style.display = "block";
+  $("#dxfResult").innerHTML =
+    `<div><b>Vonalak/poligonok:</b> ${stats.lines}</div>` +
+    `<div><b>Pontok:</b> ${stats.points}</div>` +
+    `<div><b>Feliratok:</b> ${stats.labels}</div>` +
+    `<div class="muted">Rácson kívül emiatt kihagyva: ${stats.skippedRange} elem</div>` +
+    `<div class="muted">Nem KML-be illő, kihagyott típusok: ${skippedT}</div>`;
+  $("#dxfInfo").textContent = "";
+
+  if (!features.length){
+    $("#dxfInfo").textContent = "Nincs megjeleníthető (érvényes) elem.";
+    $("#dxfMap").style.display = "none"; $("#dxfSaveBar").style.display = "none";
+    return;
+  }
+  // Térkép-előnézet
+  $("#dxfMap").style.display = "block";
+  const map = ensureMap();
+  setTimeout(() => map.invalidateSize(), 50);   // a most megjelent div mérete
+  if (dxfLayer) map.removeLayer(dxfLayer);
+  dxfLayer = L.geoJSON(toGeoJSON(features), {
+    style: (f) => ({ color: f.properties.color || "#38bdf8", weight: 2,
+                     fillColor: f.properties.color || "#38bdf8", fillOpacity: 0.2 }),
+    pointToLayer: (f, latlng) => {
+      const col = f.properties.color || "#f59e0b";
+      if (f.properties.label) {
+        const m = L.circleMarker(latlng, { radius: 3, color: col, weight: 1, fillOpacity: 1 });
+        m.bindTooltip(f.properties.name, { permanent: true, direction: "right",
+          className: "dxf-label", offset: [6, 0] });
+        return m;
+      }
+      return L.circleMarker(latlng, { radius: 4, color: col, weight: 2, fillOpacity: 0.9 });
+    },
+    onEachFeature: (f, lyr) => { if (f.properties.name && !f.properties.label) lyr.bindPopup(f.properties.name); },
+  }).addTo(map);
+  try { map.fitBounds(dxfLayer.getBounds(), { padding: [25, 25], maxZoom: 18 }); } catch(_){}
+  $("#dxfSaveBar").style.display = "flex";
+};
+
+$("#btnSaveKml").onclick = () => {
+  if (!DXFKML) return;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([DXFKML], {type:"application/vnd.google-earth.kml+xml"}));
+  a.download = DXFNAME + ".kml"; a.click();
+};
+</script>
+</body>
+</html>
