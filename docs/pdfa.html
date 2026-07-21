@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF/A ellenőrzés</title>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --line:#334155; --txt:#e2e8f0;
+          --muted:#94a3b8; --accent:#38bdf8; --ok:#22c55e; --err:#ef4444; --warn:#f59e0b; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--txt); }
+  header { padding:16px 24px; border-bottom:1px solid var(--line); }
+  header a.home { color:var(--accent); text-decoration:none; font-size:13px; }
+  header h1 { margin:6px 0 0; font-size:20px; }
+  main { max-width:900px; margin:0 auto; padding:22px; }
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:20px; margin-bottom:18px; }
+  label.file { font-size:13px; color:var(--muted); display:block; margin-bottom:6px; }
+  input[type=file] { width:100%; padding:9px 10px; background:#0b1220; color:var(--txt); border:1px solid var(--line); border-radius:7px; font-size:14px; }
+  .toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:14px; }
+  button { background:var(--accent); color:#06283d; border:0; padding:10px 18px; border-radius:8px; font-weight:600; cursor:pointer; font-size:14px; }
+  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .msg { font-size:13px; color:var(--muted); } .msg.err { color:var(--err); }
+  .cardf { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:12px; }
+  .cardf .top { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+  .cardf .name { font-weight:700; word-break:break-all; }
+  .badge { padding:3px 10px; border-radius:99px; font-size:12px; font-weight:700; white-space:nowrap; }
+  .badge.ok { background:rgba(34,197,94,.15); color:var(--ok); border:1px solid var(--ok); }
+  .badge.bad { background:rgba(239,68,68,.15); color:var(--err); border:1px solid var(--err); }
+  .badge.conv { background:rgba(56,189,248,.15); color:var(--accent); border:1px solid var(--accent); }
+  .issues { margin:12px 0 0; padding:0; list-style:none; }
+  .issues li { display:flex; gap:8px; padding:3px 0; font-size:13px; align-items:baseline; }
+  .issues .i-ok { color:var(--ok); } .issues .i-bad { color:var(--err); }
+  .issues .k { color:var(--txt); font-weight:600; min-width:210px; }
+  .issues .d { color:var(--muted); }
+  .conv-row { margin-top:12px; padding-top:12px; border-top:1px solid var(--line); display:flex; gap:10px; align-items:center; flex-wrap:wrap; font-size:13px; }
+  footer { color:var(--muted); font-size:12px; text-align:center; padding:18px; line-height:1.6; }
+  footer a { color:var(--accent); }
+</style>
+<script src="./vendor/pdf-lib.min.js"></script>
+<script src="./vendor/jszip.min.js"></script>
+</head>
+<body>
+<header>
+  <a class="home" href="./index.html">← Kezdőlap</a>
+  <h1>PDF/A ellenőrzés és konverzió</h1>
+</header>
+
+<main>
+  <div class="panel">
+    <label class="file">PDF fájl(ok) kiválasztása</label>
+    <input id="fileInput" type="file" accept="application/pdf,.pdf" multiple>
+    <div class="toolbar">
+      <button id="btnConvert" style="display:none;">Nem megfelelők konvertálása PDF/A-ba</button>
+      <button id="btnZip" class="ghost" style="display:none;">Összes konvertált letöltése (ZIP)</button>
+      <span class="msg" id="msg">Tölts fel egy vagy több PDF-et — az ellenőrzés automatikusan lefut.</span>
+    </div>
+  </div>
+
+  <div id="results"></div>
+</main>
+
+<footer>
+  A validálás heurisztikus (a fő PDF/A követelményeket nézi), nem a hivatalos veraPDF-verdikt.
+  A konverzió a <b>Ghostscript</b> (AGPL-3.0) WASM buildjével készül, PDF/A-2b sRGB OutputIntenttel.
+  Minden a böngésződben fut. · <a href="https://github.com/micoo79/VITEL">VITEL a GitHubon</a>
+</footer>
+
+<script type="module">
+import { validatePdf, ensureGs, convertToPdfA, zipFiles } from './pdfa.js';
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[<>&]/g, c => ({ "<":"&lt;", ">":"&gt;", "&":"&amp;" }[c]));
+const status = (t, err=false) => { const m = $("#msg"); m.className = "msg" + (err ? " err" : ""); m.textContent = t; };
+const pdfaName = n => n.replace(/\.pdf$/i, "") + "_pdfa.pdf";
+function download(bytes, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+  a.download = name; a.click();
+}
+
+let FILES = [];
+
+$("#fileInput").onchange = async e => {
+  const list = [...e.target.files]; if (!list.length) return;
+  status(`Ellenőrzés… (${list.length} fájl)`);
+  FILES = [];
+  for (const f of list) {
+    const bytes = new Uint8Array(await f.arrayBuffer());
+    let res; try { res = await validatePdf(bytes); } catch (err) { res = { ok:false, fatal: err.message, issues: [] }; }
+    FILES.push({ name: f.name, bytes, res, converted: null, convRes: null, convError: null });
+  }
+  render();
+  const nfail = FILES.filter(F => !F.res.ok).length;
+  status(nfail ? `${FILES.length} fájl ellenőrizve · ${nfail} nem felel meg.` : `Mind a ${FILES.length} fájl megfelel. ✅`);
+};
+
+function issuesHtml(res) {
+  if (res.fatal) return `<div class="issues"><li class="i-bad"><span class="d">${esc(res.fatal)}</span></li></div>`;
+  return `<ul class="issues">${res.issues.map(i =>
+    `<li class="${i.ok ? "i-ok" : "i-bad"}"><span>${i.ok ? "✓" : "✗"}</span><span class="k">${esc(i.key)}</span><span class="d">${esc(i.detail)}</span></li>`).join("")}</ul>`;
+}
+
+function render() {
+  $("#results").innerHTML = FILES.map((F, i) => {
+    const r = F.res;
+    const badge = r.ok ? `<span class="badge ok">Megfelel${r.declares ? " (" + esc(r.declares) + ")" : ""}</span>`
+                       : `<span class="badge bad">Nem felel meg</span>`;
+    let conv = "";
+    if (F.converted) {
+      const cok = F.convRes && F.convRes.ok;
+      conv = `<div class="conv-row">
+        <span class="badge conv">Konvertálva → PDF/A-2b</span>
+        <span class="msg">${cok ? "Az újraellenőrzés szerint megfelel. ✅" : "Konvertálva (az újraellenőrzés nem teljes körű)."}</span>
+        <button class="ghost" data-dl="${i}">Letöltés</button>
+      </div>`;
+    } else if (F.convError) {
+      conv = `<div class="conv-row"><span class="msg err">Konverziós hiba: ${esc(F.convError)}</span></div>`;
+    }
+    return `<div class="cardf">
+      <div class="top"><span class="name">${esc(F.name)}</span>${badge}</div>
+      ${issuesHtml(r)}
+      ${conv}
+    </div>`;
+  }).join("");
+
+  const failing = FILES.filter(F => !F.res.ok && !F.converted);
+  $("#btnConvert").style.display = failing.length ? "inline-block" : "none";
+  const converted = FILES.filter(F => F.converted);
+  $("#btnZip").style.display = converted.length > 1 ? "inline-block" : "none";
+}
+
+$("#results").addEventListener("click", e => {
+  const b = e.target.closest("[data-dl]"); if (!b) return;
+  const F = FILES[+b.dataset.dl];
+  if (F && F.converted) download(F.converted, pdfaName(F.name));
+});
+
+$("#btnConvert").onclick = async () => {
+  $("#btnConvert").disabled = true;
+  try { await ensureGs(m => m && status(m)); }
+  catch (e) { status("Ghostscript betöltési hiba: " + e.message, true); $("#btnConvert").disabled = false; return; }
+  const failing = FILES.filter(F => !F.res.ok && !F.converted);
+  for (const F of failing) {
+    status("Konvertálás: " + F.name + " …");
+    try { F.converted = await convertToPdfA(F.bytes); F.convRes = await validatePdf(F.converted).catch(() => null); }
+    catch (e) { F.convError = e.message; }
+    render();
+  }
+  const okc = FILES.filter(F => F.converted).length;
+  status(`Konverzió kész · ${okc} fájl átalakítva PDF/A-ba.`);
+  $("#btnConvert").disabled = false;
+};
+
+$("#btnZip").onclick = async () => {
+  const conv = FILES.filter(F => F.converted).map(F => ({ name: pdfaName(F.name), bytes: F.converted }));
+  if (!conv.length) return;
+  const blob = await zipFiles(conv);
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = "pdfa_konvertalt.zip"; a.click();
+};
+</script>
+</body>
+</html>
