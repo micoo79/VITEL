@@ -134,6 +134,7 @@ export function parseSatlab(text) {
     colIndex: Object.fromEntries(SATLAB_COLUMNS.map(([l, i]) => [l, i])),
     points,
     pointsRaw,
+    descriptions: pointsRaw.map((r) => (r[53] ?? "").trim()),   // Leírás oszlop (SATLAB)
   };
 }
 
@@ -208,14 +209,19 @@ function lla2ecef(latDeg, lonDeg, h) {
  * @param parsed  a parseSatlab kimenete
  * @param eov     betöltött EOV motor (eov.eovToWgs)
  */
-export function buildControl(parsed, eov) {
+export function buildControl(parsed, eov, selection) {
   const raw = parsed.pointsRaw, N = raw.length;
   const required = requiredCheckCount(N);
-  const m = Math.min(required, N);
 
-  const idx = [...Array(N).keys()];
-  for (let i = idx.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [idx[i], idx[j]] = [idx[j], idx[i]]; }
-  const sel = idx.slice(0, m).sort((a, b) => a - b);   // eredeti sorrend
+  let sel;
+  if (Array.isArray(selection) && selection.length) {   // kézi kiválasztás
+    sel = [...new Set(selection.filter((i) => i >= 0 && i < N))].sort((a, b) => a - b);
+  } else {                                              // random kiválasztás
+    const m = Math.min(required, N);
+    const idx = [...Array(N).keys()];
+    for (let i = idx.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [idx[i], idx[j]] = [idx[j], idx[i]]; }
+    sel = idx.slice(0, m).sort((a, b) => a - b);
+  }
   const rev = [...sel].reverse();                       // utolsótól visszafelé
 
   const T = raw.map(r => parseTs(r[IX.kezd]));
@@ -268,7 +274,7 @@ export function buildControl(parsed, eov) {
     comparison.push({ orig: raw[oi][IX.nev], ell: name, dY, dX, dZ });
   }
 
-  return { measured: N, required, checked: m, columns: parsed.columns, controlRows, comparison };
+  return { measured: N, required, checked: sel.length, selectedIndices: sel, columns: parsed.columns, controlRows, comparison };
 }
 
 // Belepesi pont: gyarto felismerese + parse.
