@@ -6,7 +6,7 @@
 <title>GNSS Mérési Jegyzőkönyv</title>
 <style>
   :root { --bg:#0f172a; --card:#1e293b; --line:#334155; --txt:#e2e8f0;
-          --muted:#94a3b8; --accent:#38bdf8; --err:#ef4444; }
+          --muted:#94a3b8; --accent:#38bdf8; --err:#ef4444; --ok:#22c55e; }
   * { box-sizing:border-box; }
   body { margin:0; font-family:system-ui,Segoe UI,Roboto,sans-serif;
          background:var(--bg); color:var(--txt); }
@@ -22,9 +22,28 @@
   .toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:14px; }
   button { background:var(--accent); color:#06283d; border:0; padding:10px 18px;
            border-radius:8px; font-weight:600; cursor:pointer; font-size:14px; }
+  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--accent); }
   button:disabled { opacity:.5; cursor:not-allowed; }
   .msg { font-size:13px; color:var(--muted); }
   .msg.err { color:var(--err); }
+
+  /* ---- Kézi kiválasztás modal ---- */
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none;
+              align-items:center; justify-content:center; z-index:50; padding:16px; }
+  .modal-bg.show { display:flex; }
+  .modal { background:var(--card); border:1px solid var(--line); border-radius:12px;
+           width:min(560px,94vw); max-height:86vh; display:flex; flex-direction:column; }
+  .modal h3 { margin:0; padding:15px 18px; border-bottom:1px solid var(--line); font-size:16px; }
+  .modal .mbody { padding:6px 18px; overflow:auto; }
+  .modal .mfoot { padding:14px 18px; border-top:1px solid var(--line); display:flex;
+                  gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+  .ptlist { list-style:none; margin:0; padding:0; }
+  .ptlist li { border-bottom:1px solid #22304a; }
+  .ptlist label { display:flex; align-items:center; gap:12px; padding:7px 4px; cursor:pointer; font-size:14px; }
+  .ptlist input { width:16px; height:16px; }
+  .ptlist .pn { font-weight:600; min-width:70px; }
+  .ptlist .pd { color:var(--muted); }
+  .mcount { font-size:13px; color:var(--muted); } .mcount.okc { color:var(--ok); font-weight:600; }
 
   /* ---- A jegyzőkönyv "papír" (képernyőn és nyomtatásban is) ---- */
   #report { display:none; background:#fff; color:#111; border-radius:8px;
@@ -86,7 +105,7 @@
     <input id="fileInput" type="file" accept=".txt,text/*">
     <div class="toolbar">
       <button id="btnPrint" disabled>PDF mentése / nyomtatás</button>
-      <button id="btnRegen" disabled>Ellenőrző pontok újragenerálása</button>
+      <button id="btnManual" class="ghost" disabled>Ellenőrző pontok kézi kiválasztása</button>
       <span class="msg" id="msg">Tölts fel egy nyers jegyzőkönyvet.</span>
     </div>
   </div>
@@ -94,14 +113,29 @@
   <div id="report"></div>
 </main>
 
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <h3>Ellenőrző pontok kézi kiválasztása</h3>
+    <div class="mbody"><ul class="ptlist" id="ptlist"></ul></div>
+    <div class="mfoot">
+      <span class="mcount" id="mcount"></span>
+      <span style="display:flex;gap:10px;">
+        <button class="ghost" id="mRandom">Véletlenszerű</button>
+        <button class="ghost" id="mCancel">Mégse</button>
+        <button id="mGen" disabled>Generálás</button>
+      </span>
+    </div>
+  </div>
+</div>
+
 <script type="module">
-import { parseReport, buildControl } from './gnss.js';
+import { parseReport, buildControl, requiredCheckCount } from './gnss.js';
 import { EOV } from './eov.js';
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[<>&]/g, c => ({ "<":"&lt;", ">":"&gt;", "&":"&amp;" }[c]));
 
-let PARSED = null;
+let PARSED = null, LAST_CONTROL = null;
 const eovPromise = EOV.load('./grids/').catch(() => null);   // VITEL a Helyi Sz/H/M-hez
 
 $("#fileInput").onchange = e => {
@@ -130,7 +164,7 @@ async function render(text) {
   const msg = $("#msg");
   if (!r.ok) {
     msg.className = "msg err"; msg.textContent = r.error;
-    $("#report").className = ""; $("#btnPrint").disabled = true; $("#btnRegen").disabled = true;
+    $("#report").className = ""; $("#btnPrint").disabled = true; $("#btnManual").disabled = true;
     return;
   }
   PARSED = r;
@@ -139,7 +173,7 @@ async function render(text) {
   await renderAll();
 }
 
-async function renderAll() {
+async function renderAll(selection) {
   const r = PARSED; if (!r) return;
   const gen = (r.meta.find(s => s.title === "Általános adatok") || { rows: [] }).rows;
   const findv = k => (gen.find(([kk]) => kk === k) || [])[1] || "";
@@ -155,7 +189,8 @@ async function renderAll() {
   const eov = await eovPromise;
   let rows = r.points, ctrlHtml = "";
   if (eov) {
-    const c = buildControl(r, eov);
+    const c = buildControl(r, eov, selection);
+    LAST_CONTROL = c;
     rows = r.points.concat(c.controlRows);              // a mért pontok után folytatódnak
     const cmp = c.comparison.map(x => `<tr>
         <td class="txt">${esc(x.orig)}</td><td class="txt">${esc(x.ell)}</td>
@@ -186,10 +221,43 @@ async function renderAll() {
     ${ctrlHtml}`;
   $("#report").className = "show";
   $("#btnPrint").disabled = false;
-  $("#btnRegen").disabled = !eov;
+  $("#btnManual").disabled = !eov;
 }
 
-$("#btnRegen").onclick = () => renderAll();
+// ---- Kézi kiválasztás modal ----
+const selectedIdx = () => [...document.querySelectorAll('.ptck:checked')].map(c => +c.value);
+function updateCount() {
+  const n = selectedIdx().length, req = requiredCheckCount(PARSED ? PARSED.points.length : 0);
+  const el = $("#mcount");
+  el.textContent = `Kiválasztva: ${n} · szükséges: ${req}`;
+  el.className = "mcount" + (n >= req && n > 0 ? " okc" : "");
+  $("#mGen").disabled = !(n >= req && n > 0);
+}
+function openModal() {
+  if (!PARSED) return;
+  const cur = new Set((LAST_CONTROL && LAST_CONTROL.selectedIndices) || []);
+  $("#ptlist").innerHTML = PARSED.pointsRaw.map((row, i) =>
+    `<li><label><input type="checkbox" class="ptck" value="${i}" ${cur.has(i) ? "checked" : ""}>` +
+    `<span class="pn">${esc(row[0])}</span><span class="pd">${esc((PARSED.descriptions || [])[i] || "")}</span></label></li>`).join("");
+  updateCount();
+  $("#modalBg").classList.add("show");
+}
+const closeModal = () => $("#modalBg").classList.remove("show");
+
+$("#btnManual").onclick = openModal;
+$("#ptlist").addEventListener("change", updateCount);
+$("#mCancel").onclick = closeModal;
+$("#modalBg").addEventListener("click", e => { if (e.target.id === "modalBg") closeModal(); });
+$("#mRandom").onclick = () => {
+  const N = PARSED.pointsRaw.length, req = requiredCheckCount(PARSED.points.length);
+  const idx = [...Array(N).keys()];
+  for (let i = idx.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [idx[i], idx[j]] = [idx[j], idx[i]]; }
+  const pick = new Set(idx.slice(0, Math.min(req, N)));
+  document.querySelectorAll(".ptck").forEach(c => { c.checked = pick.has(+c.value); });
+  updateCount();
+};
+$("#mGen").onclick = async () => { const sel = selectedIdx(); closeModal(); await renderAll(sel); };
+
 $("#btnPrint").onclick = () => window.print();
 </script>
 </body>
