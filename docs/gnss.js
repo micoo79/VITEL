@@ -141,12 +141,19 @@ export function parseSatlab(text) {
 //  ELLENŐRZÉSI JEGYZŐKÖNYV  —  ellenőrző pontok generálása + összehasonlítás
 // ===========================================================================
 
-// Mért pontok darabszáma -> vizsgálandó (ellenőrzendő) pontok száma.
+// Meghatározott részletpontok száma -> ellenőrzendő részletpontok száma.
+//   1–10        : legalább 1 db
+//   11–100      : 10%, de legalább 2 db
+//   101–1 000   : 5%,  de legalább 10 db
+//   1 001–10 000: 3%,  de legalább 50 db
+//   10 000 fölött: 1%, de legalább 300 db
 export function requiredCheckCount(n) {
-  const T = [[50, 15], [100, 20], [200, 30], [320, 40], [500, 55], [800, 75],
-             [1200, 115], [3200, 150], [8000, 225], [20000, 300], [100000, 450]];
-  for (const [mx, r] of T) if (n <= mx) return r;
-  return 750;
+  if (n <= 0) return 0;
+  if (n <= 10) return 1;
+  if (n <= 100) return Math.max(Math.ceil(n * 0.10), 2);
+  if (n <= 1000) return Math.max(Math.ceil(n * 0.05), 10);
+  if (n <= 10000) return Math.max(Math.ceil(n * 0.03), 50);
+  return Math.max(Math.ceil(n * 0.01), 300);
 }
 
 // A nyers SATLAB adatsor fix indexei (a "Tárolt pontok" fejléc szerint)
