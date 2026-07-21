@@ -60,12 +60,6 @@
   <div id="results"></div>
 </main>
 
-<footer>
-  A validálás heurisztikus (a fő PDF/A követelményeket nézi), nem a hivatalos veraPDF-verdikt.
-  A konverzió a <b>Ghostscript</b> (AGPL-3.0) WASM buildjével készül, PDF/A-2b sRGB OutputIntenttel.
-  Minden a böngésződben fut. · <a href="https://github.com/micoo79/VITEL">VITEL a GitHubon</a>
-</footer>
-
 <script type="module">
 import { validatePdf, ensureGs, convertToPdfA, zipFiles } from './pdfa.js';
 
