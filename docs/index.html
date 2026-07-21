@@ -5,60 +5,64 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Geodéziai eszközök</title>
 <style>
-  :root { --bg:#0f172a; --card:#1e293b; --line:#334155; --txt:#e2e8f0;
-          --muted:#94a3b8; --accent:#38bdf8; }
-  * { box-sizing:border-box; }
-  body { margin:0; min-height:100vh; font-family:system-ui,Segoe UI,Roboto,sans-serif;
-         background:radial-gradient(1200px 600px at 50% -10%, #16233f, var(--bg));
-         color:var(--txt); display:flex; flex-direction:column; }
-  header { padding:40px 24px 10px; text-align:center; }
-  header h1 { margin:0; font-size:26px; }
-  header p { margin:8px 0 0; color:var(--muted); font-size:14px; }
-  main { flex:1; display:flex; align-items:center; justify-content:center; padding:24px; }
-  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
-           gap:22px; max-width:760px; width:100%; }
-  .tile { display:block; text-decoration:none; color:inherit; background:var(--card);
-          border:1px solid var(--line); border-radius:16px; padding:26px;
-          transition:transform .12s, border-color .12s; }
-  .tile:hover { transform:translateY(-3px); border-color:var(--accent); }
-  .tile .ico { font-size:40px; line-height:1; }
-  .tile h2 { margin:14px 0 6px; font-size:19px; }
-  .tile p { margin:0; color:var(--muted); font-size:13.5px; line-height:1.5; }
-  .tile .go { margin-top:16px; color:var(--accent); font-size:13px; font-weight:600; }
-  footer { color:var(--muted); font-size:12px; text-align:center; padding:18px; }
-  footer a { color:var(--accent); }
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --bg:#101216; --txt:#e8eaef; --muted:#949bab; --title:#f2f4f8;
+    --rule:#242833; --accent:#e0a84b; --rowhover:#181b22;
+    --sans:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono","Cascadia Code","Roboto Mono",Consolas,monospace;
+  }
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--txt);font-family:var(--sans);
+       -webkit-font-smoothing:antialiased}
+  a{color:inherit;text-decoration:none}
+  .page{max-width:1000px;margin:0 auto;padding:64px 32px;min-height:100vh;
+        display:flex;flex-direction:column;justify-content:center}
+  .title{font-size:clamp(34px,5vw,52px);font-weight:600;letter-spacing:-.02em;
+         color:var(--title);margin-bottom:44px;text-wrap:balance}
+  .list{border-top:1px solid var(--rule)}
+  .row{display:flex;align-items:baseline;gap:24px;padding:26px 6px;
+       border-bottom:1px solid var(--rule);transition:background .16s,padding .16s}
+  .row .rn{font-family:var(--mono);font-size:12px;opacity:.5;width:26px;flex:none}
+  .row h3{font-size:clamp(22px,3vw,30px);font-weight:600;letter-spacing:-.02em;
+          color:var(--title);flex:none;min-width:min(46%,340px)}
+  .row p{font-size:14px;line-height:1.5;color:var(--muted)}
+  .row .arr{margin-left:auto;font-size:20px;color:var(--accent);opacity:.4;
+            transition:opacity .16s,transform .16s}
+  .row:hover{background:var(--rowhover);padding-left:14px;padding-right:14px}
+  .row:hover .arr{opacity:1;transform:translateX(4px)}
+  .row:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  @media(max-width:680px){
+    .row{flex-wrap:wrap;gap:6px 16px}
+    .row h3{min-width:0;width:calc(100% - 42px)}
+    .row p{width:100%;padding-left:50px}
+    .row .arr{position:absolute}
+  }
 </style>
 </head>
 <body>
-<header>
-  <h1>Geodéziai eszközök</h1>
-  <p>Válassz egy eszközt</p>
-</header>
-
-<main>
-  <div class="tiles">
-    <a class="tile" href="./vitel.html">
-      <div class="ico">🧭</div>
-      <h2>VITEL transzformáció</h2>
-      <p>Centiméter-pontos WGS84/ETRS89 ⇄ EOV (+ Balti magasság) átszámítás:
-         kézi bevitel, fájl import és DXF → KML műholdképes előnézettel.</p>
-      <div class="go">Megnyitás →</div>
+<main class="page">
+  <h1 class="title">Geodéziai eszközök</h1>
+  <nav class="list">
+    <a class="row" href="./vitel.html">
+      <span class="rn">01</span>
+      <h3>VITEL transzformáció</h3>
+      <p>WGS84 ⇄ EOV átszámítás. Kézi bevitel, fájl import, DXF → KML.</p>
+      <span class="arr" aria-hidden="true">→</span>
     </a>
-    <a class="tile" href="./gnss.html">
-      <div class="ico">📄</div>
-      <h2>GNSS jegyzőkönyv</h2>
-      <p>Nyers GNSS mérési jegyzőkönyv (pl. Satlab) feltöltése, és szépen
-         formázott GNSS Mérési Jegyzőkönyv készítése PDF-be.</p>
-      <div class="go">Megnyitás →</div>
+    <a class="row" href="./gnss.html">
+      <span class="rn">02</span>
+      <h3>GNSS jegyzőkönyv</h3>
+      <p>Mérési jegyzőkönyv és ellenőrző mérés nyers vevőfájlból.</p>
+      <span class="arr" aria-hidden="true">→</span>
     </a>
-    <a class="tile" href="./pdfa.html">
-      <div class="ico">🗂️</div>
-      <h2>PDF/A ellenőrzés</h2>
-      <p>Egy vagy több PDF ellenőrzése PDF/A-megfelelőségre, és a nem megfelelők
-         átkonvertálása PDF/A-ba — letöltés egyenként vagy ZIP-ben.</p>
-      <div class="go">Megnyitás →</div>
+    <a class="row" href="./pdfa.html">
+      <span class="rn">03</span>
+      <h3>PDF/A ellenőrzés</h3>
+      <p>PDF/A megfelelőség vizsgálata és konverzió.</p>
+      <span class="arr" aria-hidden="true">→</span>
     </a>
-  </div>
+  </nav>
 </main>
 </body>
 </html>
