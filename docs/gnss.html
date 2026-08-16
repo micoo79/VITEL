@@ -92,6 +92,7 @@
     .meta-sec { border-color:#999; }
   }
 </style>
+<script src="./vendor/xlsx.full.min.js"></script>
 </head>
 <body>
 <header class="no-print">
@@ -101,8 +102,8 @@
 
 <main>
   <div class="panel no-print">
-    <label class="file">Nyers mérési jegyzőkönyv (.txt) — jelenleg támogatott: Satlab</label>
-    <input id="fileInput" type="file" accept=".txt,text/*">
+    <label class="file">Nyers mérési jegyzőkönyv — támogatott: Satlab (.txt), FORGEO / Emlid (.xls)</label>
+    <input id="fileInput" type="file" accept=".txt,.xls,.xlsx,text/*">
     <div class="toolbar">
       <button id="btnPrint" disabled>PDF mentése / nyomtatás</button>
       <button id="btnManual" class="ghost" disabled>Ellenőrző pontok kézi kiválasztása</button>
@@ -138,11 +139,19 @@ const esc = s => String(s ?? "").replace(/[<>&]/g, c => ({ "<":"&lt;", ">":"&gt;
 let PARSED = null, LAST_CONTROL = null;
 const eovPromise = EOV.load('./grids/').catch(() => null);   // VITEL a Helyi Sz/H/M-hez
 
-$("#fileInput").onchange = e => {
+$("#fileInput").onchange = async e => {
   const f = e.target.files[0]; if (!f) return;
-  const rd = new FileReader();
-  rd.onload = () => render(rd.result);
-  rd.readAsText(f);
+  const name = f.name.toLowerCase();
+  try {
+    if (name.endsWith(".xls") || name.endsWith(".xlsx")) {
+      const wb = XLSX.read(await f.arrayBuffer(), { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: "" });
+      await render(rows);
+    } else {
+      await render(await f.text());
+    }
+  } catch (err) { $("#msg").className = "msg err"; $("#msg").textContent = "A fájl nem olvasható: " + err.message; }
 };
 
 // 22 oszlopos pont-tábla (fő + ellenőrző); a KezdHelyi idő két sorba tördelve
@@ -236,9 +245,10 @@ function updateCount() {
 function openModal() {
   if (!PARSED) return;
   const cur = new Set((LAST_CONTROL && LAST_CONTROL.selectedIndices) || []);
-  $("#ptlist").innerHTML = PARSED.pointsRaw.map((row, i) =>
+  const nevIdx = PARSED.ctrl ? PARSED.ctrl.nevIdx : 0;
+  $("#ptlist").innerHTML = PARSED.points.map((row, i) =>
     `<li><label><input type="checkbox" class="ptck" value="${i}" ${cur.has(i) ? "checked" : ""}>` +
-    `<span class="pn">${esc(row[0])}</span><span class="pd">${esc((PARSED.descriptions || [])[i] || "")}</span></label></li>`).join("");
+    `<span class="pn">${esc(row[nevIdx])}</span><span class="pd">${esc((PARSED.descriptions || [])[i] || "")}</span></label></li>`).join("");
   updateCount();
   $("#modalBg").classList.add("show");
 }
@@ -249,7 +259,7 @@ $("#ptlist").addEventListener("change", updateCount);
 $("#mCancel").onclick = closeModal;
 $("#modalBg").addEventListener("click", e => { if (e.target.id === "modalBg") closeModal(); });
 $("#mRandom").onclick = () => {
-  const N = PARSED.pointsRaw.length, req = requiredCheckCount(PARSED.points.length);
+  const N = PARSED.points.length, req = requiredCheckCount(PARSED.points.length);
   const idx = [...Array(N).keys()];
   for (let i = idx.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [idx[i], idx[j]] = [idx[j], idx[i]]; }
   const pick = new Set(idx.slice(0, Math.min(req, N)));
