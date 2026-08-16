@@ -126,15 +126,27 @@ export function parseSatlab(text) {
     }
   }
 
+  const cols = SATLAB_COLUMNS.map(([label]) => label);
+  const P = {}; cols.forEach((c, i) => (P[c] = i));
   return {
-    manufacturer: G("Gyártó:") || "Ismeretlen",
+    manufacturer: G("Gyártó:") || "Satlab",
     title: firstLine,
     meta,
-    columns: SATLAB_COLUMNS.map(([label]) => label),
-    colIndex: Object.fromEntries(SATLAB_COLUMNS.map(([l, i]) => [l, i])),
+    columns: cols,
     points,
-    pointsRaw,
     descriptions: pointsRaw.map((r) => (r[53] ?? "").trim()),   // Leírás oszlop (SATLAB)
+    times: pointsRaw.map((r) => parseTs(r[49])),                 // KezdHelyi idő -> ms
+    ctrl: {
+      nevIdx: P["Név"], kIdx: P["K"], eIdx: P["É"], mIdx: P["M"],
+      szIdx: P["Helyi Sz"], hIdx: P["Helyi H"], mmIdx: P["Helyi M"],
+      timeIdx: P["KezdHelyi idő"],
+      randomize: [P["HRMS"], P["VRMS"], P["PDOP"]],
+      baseline: { dNIdx: P["Baseline Vector dN"], dEIdx: P["Baseline Vector dE"], dZIdx: P["Baseline Vector dZ"] },
+      durationMs: 2000,
+      formatTime: fmtTs,
+      dmsLat: (d) => toDMS(d, true),
+      dmsLon: (d) => toDMS(d, false),
+    },
   };
 }
 
@@ -198,6 +210,30 @@ function lla2ecef(latDeg, lonDeg, h) {
   };
 }
 
+// tizedes fok -> "DD°MM′SS.ssss″" + féltekejel (a FORGEO/Emlid formátum szerint)
+function toDMSSym(deg, isLat) {
+  const hemi = isLat ? (deg < 0 ? "S" : "N") : (deg < 0 ? "W" : "E");
+  let a = Math.abs(deg), d = Math.floor(a), mf = (a - d) * 60, mi = Math.floor(mf);
+  let ss = Math.round((mf - mi) * 60 * 1e4) / 1e4;
+  if (ss >= 60) { ss -= 60; mi += 1; }
+  if (mi >= 60) { mi -= 60; d += 1; }
+  return `${d}°${String(mi).padStart(2, "0")}′${ss.toFixed(4).padStart(7, "0")}″${hemi}`;
+}
+// FORGEO idő: "DD-MM-YYYY" + "HH:MM:SS" -> ms
+function parseForgeoTs(dateStr, timeStr) {
+  const dm = String(dateStr).match(/(\d{1,2})-(\d{1,2})-(\d{4})/);
+  const tm = String(timeStr).match(/(\d{1,2}):(\d{2}):(\d{2})/);
+  if (!dm || !tm) return null;
+  return Date.UTC(+dm[3], +dm[2] - 1, +dm[1], +tm[1], +tm[2], +tm[3]);
+}
+function formatForgeoTime(ms) {
+  const d = new Date(ms), p = (x) => String(x).padStart(2, "0");
+  return `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+}
+// az eredeti cella tizedesjegy-számát megtartva formáz (pl. "1.100" -> 3 tizedes)
+function decimalsOf(s) { const m = String(s).match(/[.,](\d+)/); return m ? m[1].length : 3; }
+function fixLike(num, sample) { return num.toFixed(decimalsOf(sample)); }
+
 /**
  * Ellenőrző mérés szimulálása.
  *   - a mért pontszám alapján kiválasztja a vizsgálandó darabszámot (táblázat),
@@ -210,7 +246,7 @@ function lla2ecef(latDeg, lonDeg, h) {
  * @param eov     betöltött EOV motor (eov.eovToWgs)
  */
 export function buildControl(parsed, eov, selection) {
-  const raw = parsed.pointsRaw, N = raw.length;
+  const C = parsed.points, N = C.length, s = parsed.ctrl, T = parsed.times || [];
   const required = requiredCheckCount(N);
 
   let sel;
@@ -224,62 +260,139 @@ export function buildControl(parsed, eov, selection) {
   }
   const rev = [...sel].reverse();                       // utolsótól visszafelé
 
-  const T = raw.map(r => parseTs(r[IX.kezd]));
-  const Vend = raw.map(r => parseTs(r[IX.veg]) ?? ((parseTs(r[IX.kezd]) ?? 0) + 2000));
+  // a randomizálandó minőségi oszlopok min–max tartománya
+  const mm = {};
+  for (const ci of s.randomize) { const a = C.map((r) => parseFloat(r[ci])).filter(Number.isFinite); mm[ci] = [Math.min(...a), Math.max(...a)]; }
 
-  // HRMS/VRMS/PDOP min–max az összes mért pontból (ezen belül randomizálunk)
-  const mm = (ix) => { const a = raw.map(r => parseFloat(r[ix])).filter(Number.isFinite); return [Math.min(...a), Math.max(...a)]; };
-  const [hMin, hMax] = mm(IX.hrms), [vMin, vMax] = mm(IX.vrms), [pMin, pMax] = mm(IX.pdop);
-
-  const P = {}; parsed.columns.forEach((c, i) => (P[c] = i));
+  const dur = s.durationMs || 2000;
   const controlRows = [], comparison = [];
-  let cursor = Vend[N - 1];                              // az utolsó mért pont után
+  let cursor = (T[N - 1] || 0) + dur;                   // az utolsó mért pont után
 
   for (let k = 0; k < rev.length; k++) {
     const oi = rev[k];
-    const travel = k === 0 ? (T[N - 1] - T[oi]) : (T[rev[k - 1]] - T[oi]);
+    const travel = k === 0 ? ((T[N - 1] || 0) - (T[oi] || 0)) : ((T[rev[k - 1]] || 0) - (T[oi] || 0));
     cursor += Math.max(0, travel || 0);
     const cStart = cursor;
-    cursor += Math.max(1000, (Vend[oi] - T[oi]) || 2000);
+    cursor += dur;
 
-    const K0 = parseFloat(raw[oi][IX.K]), E0 = parseFloat(raw[oi][IX.E]), M0 = parseFloat(raw[oi][IX.M]);
+    const orig = C[oi];
+    const K0 = parseFloat(orig[s.kIdx]), E0 = parseFloat(orig[s.eIdx]), M0 = parseFloat(orig[s.mIdx]);
     const oK = _offXY(), oE = _offXY(), oM = _offZ();     // eltolások (m)
     const Kc = K0 + oK, Ec = E0 + oE, Mc = M0 + oM;
-    const w = eov.eovToWgs(Kc, Ec, Mc);                  // {lat, lon, h} — VITEL (módosított)
-    const w0 = eov.eovToWgs(K0, E0, M0);                 // eredeti pozíció
+    const w = eov.eovToWgs(Kc, Ec, Mc);                  // módosított pont -> WGS (VITEL)
 
-    const name = `${1001 + k}_${raw[oi][IX.nev]}_ell`;
-    const row = parsed.points[oi].slice();               // a többi adat az eredetiből
-    row[P["Név"]] = name;
-    row[P["K"]] = Kc.toFixed(4);
-    row[P["É"]] = Ec.toFixed(4);
-    row[P["M"]] = Mc.toFixed(4);
-    row[P["Helyi Sz"]] = toDMS(w.lat, true);
-    row[P["Helyi H"]] = toDMS(w.lon, false);
-    row[P["Helyi M"]] = w.h.toFixed(4);
-    row[P["KezdHelyi idő"]] = fmtTs(cStart);
+    const row = orig.slice();                            // a többi adat az eredetiből
+    row[s.nevIdx] = `${1001 + k}_${orig[s.nevIdx]}_ell`;
+    row[s.kIdx] = fixLike(Kc, orig[s.kIdx]);
+    row[s.eIdx] = fixLike(Ec, orig[s.eIdx]);
+    row[s.mIdx] = fixLike(Mc, orig[s.mIdx]);
+    if (s.szIdx != null) row[s.szIdx] = s.dmsLat(w.lat);
+    if (s.hIdx != null) row[s.hIdx] = s.dmsLon(w.lon);
+    if (s.mmIdx != null) row[s.mmIdx] = fixLike(w.h, orig[s.mmIdx]);
+    if (s.timeIdx != null) row[s.timeIdx] = s.formatTime(cStart);
 
-    // Új baseline vektor: eredeti baseline + a pont ECEF-elmozdulása (bázis változatlan)
-    const e0 = lla2ecef(w0.lat, w0.lon, w0.h), ec = lla2ecef(w.lat, w.lon, w.h);
-    row[P["Baseline Vector dN"]] = (parseFloat(raw[oi][IX.dN]) + (ec.x - e0.x)).toFixed(4);
-    row[P["Baseline Vector dE"]] = (parseFloat(raw[oi][IX.dE]) + (ec.y - e0.y)).toFixed(4);
-    row[P["Baseline Vector dZ"]] = (parseFloat(raw[oi][IX.dZ]) + (ec.z - e0.z)).toFixed(4);
-    // HRMS/VRMS/PDOP: a mért pontok min–max tartományában randomizálva
-    row[P["HRMS"]] = _rng(hMin, hMax).toFixed(4);
-    row[P["VRMS"]] = _rng(vMin, vMax).toFixed(4);
-    row[P["PDOP"]] = _rng(pMin, pMax).toFixed(3);
+    // baseline vektor újraszámolása (ha a formátum tartalmazza)
+    if (s.baseline) {
+      const w0 = eov.eovToWgs(K0, E0, M0);
+      const e0 = lla2ecef(w0.lat, w0.lon, w0.h), ec = lla2ecef(w.lat, w.lon, w.h);
+      const b = s.baseline;
+      row[b.dNIdx] = fixLike(parseFloat(orig[b.dNIdx]) + (ec.x - e0.x), orig[b.dNIdx]);
+      row[b.dEIdx] = fixLike(parseFloat(orig[b.dEIdx]) + (ec.y - e0.y), orig[b.dEIdx]);
+      row[b.dZIdx] = fixLike(parseFloat(orig[b.dZIdx]) + (ec.z - e0.z), orig[b.dZIdx]);
+    }
+    // minőségi mutatók a mért pontok min–max tartományában randomizálva
+    for (const ci of s.randomize) row[ci] = fixLike(_rng(mm[ci][0], mm[ci][1]), orig[ci]);
+
     controlRows.push(row);
-
-    const dY = oK * 100, dX = oE * 100, dZ = oM * 100;   // cm (Y=Kelet, X=Észak, Z=magasság)
-    comparison.push({ orig: raw[oi][IX.nev], ell: name, dY, dX, dZ });
+    comparison.push({ orig: orig[s.nevIdx], ell: row[s.nevIdx], dY: oK * 100, dX: oE * 100, dZ: oM * 100 });
   }
 
   return { measured: N, required, checked: sel.length, selectedIndices: sel, columns: parsed.columns, controlRows, comparison };
 }
 
-// Belepesi pont: gyarto felismerese + parse.
-export function parseReport(text) {
-  const man = (detectManufacturer(text) || "").toLowerCase();
-  if (man.includes("satlab")) return { ok: true, ...parseSatlab(text) };
-  return { ok: false, error: "Ismeretlen vagy nem támogatott gyártó. Jelenleg: Satlab." };
+// ===========================================================================
+//  FORGEO MÉRTÉK / Emlid Reach  (.xls -> soronkénti tömb)
+// ===========================================================================
+const _cell = (v) => (v == null ? "" : String(v)).trim();
+
+export function parseForgeo(rowsIn) {
+  const R = (rowsIn || []).map((r) => (r || []).map(_cell));
+  const grabX = (label) => {
+    for (const r of R) for (const c of r) if (c.startsWith(label + ":")) return c.slice(label.length + 1).trim();
+    return null;
+  };
+  const title = grabX("Projektnév") || (R[0] && R[0][0]) || "GNSS jegyzőkönyv";
+  const firmware = grabX("Firmware Name");
+
+  const meta = [
+    section("Általános adatok", [
+      ["Projektnév", grabX("Projektnév")], ["Dátum", grabX("Date")],
+      ["Koordináta-rendszer", grabX("Coordinate system")],
+      ["Geoid fájl", grabX("Geoid file")], ["Grid fájl", grabX("Grid file")],
+    ]),
+    section("Vevő és antenna", [
+      ["Vevő típusa", grabX("Receiver Type")], ["Sorozatszám", grabX("Receiver serial number")],
+      ["Antenna típusa", grabX("Antenna type")], ["L1 külpont", grabX("L1 offset")],
+      ["L2 külpont", grabX("L2 offset")], ["Firmware", firmware],
+    ]),
+  ];
+
+  // bázisállomás
+  const bi = R.findIndex((r) => r[0] === "GNSS base station");
+  if (bi >= 0) {
+    let h = bi + 1; while (h < R.length && R[h][0] !== "Nr") h++;
+    const d = R[h + 1] || [];
+    const bsec = section("Bázisállomás", [
+      ["Nr", d[0]], ["Dátum", d[1]], ["Idő", d[2]], ["B", d[3]], ["L", d[4]],
+      ["H", d[5]], ["X", d[6]], ["Y", d[7]], ["Z", d[8]],
+    ]);
+    if (bsec) meta.push(bsec);
+  }
+
+  // mérések
+  const mi = R.findIndex((r) => r[0] === "GNSS measurements");
+  let mh = mi + 1; while (mh < R.length && R[mh][0] !== "Nr") mh++;
+  // nyers oszlop-indexek: Nr0 Date1 Time2 GMT3 Mode4 B5 L6 H7 X8 Y9 Z10 x11 y12 h13 E14 Sat15 PDOP16 mp17 mh18 H.ant19
+  const MAP = [0, 12, 11, 13, 5, 6, 7, 1, 2, 4, 15, 16, 17, 18, 19];   // y=Kelet(K), x=Észak(É), h=EOV mag.
+  const columns = ["Nr", "K", "É", "M", "B", "L", "H", "Dátum", "Idő", "Mód", "Sat", "PDOP", "mp", "mh", "H.ant"];
+  const points = [], times = [], descriptions = [];
+  for (let i = mh + 1; i < R.length; i++) {
+    const r = R[i];
+    if (!r[0] || !/^\d/.test(r[0])) break;               // az adatsorok végéig
+    points.push(MAP.map((ri) => r[ri] ?? ""));
+    times.push(parseForgeoTs(r[1], r[2]));
+    descriptions.push(r[2] || "");                        // idő (a modálban megkülönböztetéshez)
+  }
+
+  const P = {}; columns.forEach((c, i) => (P[c] = i));
+  return {
+    manufacturer: firmware && /forgeo/i.test(firmware) ? "FORGEO MÉRTÉK" : "Emlid Reach",
+    title, meta, columns, points, descriptions, times,
+    ctrl: {
+      nevIdx: P["Nr"], kIdx: P["K"], eIdx: P["É"], mIdx: P["M"],
+      szIdx: P["B"], hIdx: P["L"], mmIdx: P["H"], timeIdx: P["Idő"],
+      randomize: [P["PDOP"], P["mp"], P["mh"]],
+      baseline: null, durationMs: 2000,
+      formatTime: formatForgeoTime,
+      dmsLat: (d) => toDMSSym(d, true),
+      dmsLon: (d) => toDMSSym(d, false),
+    },
+  };
+}
+
+// Belepesi pont: formatum-felismeres + parse.
+//   text (string)  -> SATLAB (Gyártó:Satlab)
+//   rows (tömb)    -> FORGEO/Emlid xls
+export function parseReport(input) {
+  if (typeof input === "string") {
+    const man = (detectManufacturer(input) || "").toLowerCase();
+    if (man.includes("satlab")) return { ok: true, ...parseSatlab(input) };
+    return { ok: false, error: "Ismeretlen szöveges jegyzőkönyv (Satlab várható)." };
+  }
+  if (Array.isArray(input)) {
+    const flat = input.flat().map(String).join(" ");
+    if (/GNSS MEASUREMENT REPORT|FORGEO|Emlid/i.test(flat)) return { ok: true, ...parseForgeo(input) };
+    return { ok: false, error: "Ismeretlen táblázatos jegyzőkönyv (FORGEO/Emlid várható)." };
+  }
+  return { ok: false, error: "Ismeretlen fájltípus." };
 }
