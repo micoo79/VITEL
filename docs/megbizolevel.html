@@ -2,7 +2,11 @@
 <html lang="hu">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b1220">
 <title>Megbízólevél</title>
 <style>
   :root{ --bg:#0f172a; --card:#1e293b; --line:#334155; --txt:#e2e8f0; --muted:#94a3b8;
@@ -44,7 +48,10 @@
   .sigrole{color:#444;font-size:13px}
 
   /* ---- aláíró overlay (teljes képernyő) ---- */
-  .overlay{position:fixed;inset:0;z-index:100;background:#0b1220;display:none}
+  /* a valós látható területhez igazodik: dvh/svh ott, ahol van, egyébként JS a visualViewport-ból */
+  .overlay{position:fixed;left:0;top:0;width:100vw;height:100vh;height:100svh;height:100dvh;
+           z-index:100;background:#0b1220;display:none;overflow:hidden;
+           padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
   .overlay.show{display:block}
   /* forgatás-kérő (álló tájolásnál) */
   .rotate{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
@@ -164,20 +171,40 @@ sync();
 const ov = $('#ov'), canvas = $('#sig'), ctx = canvas.getContext('2d');
 let drawing=false, hasInk=false, last=null;
 
+function onViewport(){ applyVV(); orient(); }
 function openSign(){
   const bad = inputs.filter(i=>!i.value.trim());
   if(bad.length){ bad.forEach(i=>i.classList.add('bad'));
     $('#msg').className='msg err'; $('#msg').textContent='Előbb tölts ki minden mezőt.'; return; }
   ov.classList.add('show');
-  goFullscreen();                       // teljes képernyő — nincs böngészősáv
-  orient();
-  window.addEventListener('resize', orient);
+  goFullscreen();                       // teljes képernyő ott, ahol a böngésző engedi
+  onViewport();
+  window.addEventListener('resize', onViewport);
+  window.addEventListener('orientationchange', onViewport);
+  const vv = window.visualViewport;
+  if(vv){ vv.addEventListener('resize', onViewport); vv.addEventListener('scroll', onViewport); }
 }
 function closeSign(){
   ov.classList.remove('show');
-  window.removeEventListener('resize', orient);
+  window.removeEventListener('resize', onViewport);
+  window.removeEventListener('orientationchange', onViewport);
+  const vv = window.visualViewport;
+  if(vv){ vv.removeEventListener('resize', onViewport); vv.removeEventListener('scroll', onViewport); }
+  ov.style.width=''; ov.style.height='';
   try{ screen.orientation && screen.orientation.unlock && screen.orientation.unlock(); }catch(_){}
   dropFullscreen();
+}
+
+// a VALÓS látható terület (böngészősávok levonva) — iOS Safarin is pontos
+function vpSize(){
+  const vv = window.visualViewport;
+  return vv ? { w:vv.width, h:vv.height } : { w:window.innerWidth, h:window.innerHeight };
+}
+// az overlay-t pontosan a látható viewportra méretezi, hogy sáv ne takarja a vásznat
+function applyVV(){
+  const s = vpSize();
+  ov.style.width = s.w+'px';
+  ov.style.height = s.h+'px';
 }
 
 // --- teljes képernyő (a gombnyomás érvényes felhasználói gesztus) ---
@@ -200,7 +227,8 @@ document.addEventListener('fullscreenchange', onFsChange);
 document.addEventListener('webkitfullscreenchange', onFsChange);
 
 function orient(){
-  const landscape = window.innerWidth > window.innerHeight;
+  const s = vpSize();
+  const landscape = s.w > s.h;
   $('#sigarea').classList.toggle('show', landscape);
   $('#rotate').style.display = landscape ? 'none' : 'flex';
   if(landscape) requestAnimationFrame(fitCanvas);   // a layout leülepedése után
@@ -226,12 +254,31 @@ function fitCanvas(){
 }
 // a megjelenített canvas-méret valódi változására is reagál (a leghitelesebb jelzés)
 new ResizeObserver(()=>fitCanvas()).observe(canvas);
-function pos(e){ const r=canvas.getBoundingClientRect(); return { x:e.clientX-r.left, y:e.clientY-r.top }; }
-canvas.addEventListener('pointerdown', e=>{ e.preventDefault(); drawing=true; last=pos(e); canvas.setPointerCapture(e.pointerId); });
-canvas.addEventListener('pointermove', e=>{ if(!drawing) return; e.preventDefault(); const p=pos(e);
-  ctx.beginPath(); ctx.moveTo(last.x,last.y); ctx.lineTo(p.x,p.y); ctx.stroke(); last=p; hasInk=true; });
-const stop=()=>{ drawing=false; };
-canvas.addEventListener('pointerup', stop); canvas.addEventListener('pointercancel', stop);
+// univerzális koordináta: Pointer/Touch/Mouse — mindig az AKTUÁLIS canvas-téglalaphoz képest
+function pos(e){
+  const r = canvas.getBoundingClientRect();
+  const src = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e;
+  return { x: src.clientX - r.left, y: src.clientY - r.top };
+}
+function startDraw(e){ e.preventDefault(); drawing=true; last=pos(e); }
+function moveDraw(e){ if(!drawing) return; e.preventDefault(); const p=pos(e);
+  ctx.beginPath(); ctx.moveTo(last.x,last.y); ctx.lineTo(p.x,p.y); ctx.stroke(); last=p; hasInk=true; }
+function endDraw(){ drawing=false; }
+
+if(window.PointerEvent){                 // modern: egy API egér/érintő/toll helyett
+  canvas.addEventListener('pointerdown', e=>{ startDraw(e); try{canvas.setPointerCapture(e.pointerId);}catch(_){} });
+  canvas.addEventListener('pointermove', moveDraw);
+  canvas.addEventListener('pointerup', endDraw);
+  canvas.addEventListener('pointercancel', endDraw);
+}else{                                    // tartalék: régi mobilböngészők
+  canvas.addEventListener('touchstart', startDraw, {passive:false});
+  canvas.addEventListener('touchmove',  moveDraw,  {passive:false});
+  canvas.addEventListener('touchend',   endDraw);
+  canvas.addEventListener('touchcancel',endDraw);
+  canvas.addEventListener('mousedown',  startDraw);
+  canvas.addEventListener('mousemove',  moveDraw);
+  canvas.addEventListener('mouseup',    endDraw);
+}
 
 $('#clear').onclick = ()=>{ ctx.clearRect(0,0,canvas.width,canvas.height); hasInk=false; };
 $('#cancel').onclick = closeSign;
