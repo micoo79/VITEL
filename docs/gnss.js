@@ -288,7 +288,10 @@ export function buildControl(parsed, eov, selection) {
     row[s.mIdx] = fixLike(Mc, orig[s.mIdx]);
     if (s.szIdx != null) row[s.szIdx] = s.dmsLat(w.lat);
     if (s.hIdx != null) row[s.hIdx] = s.dmsLon(w.lon);
-    if (s.mmIdx != null) row[s.mmIdx] = fixLike(w.h, orig[s.mmIdx]);
+    if (s.mmIdx != null) {
+      const hv = s.mmFromOffset ? (parseFloat(orig[s.mmIdx]) + oM) : w.h;   // helyi magasság: eredeti + eltolás
+      row[s.mmIdx] = fixLike(hv, orig[s.mmIdx]);
+    }
     if (s.timeIdx != null) row[s.timeIdx] = s.formatTime(cStart);
 
     // baseline vektor újraszámolása (ha a formátum tartalmazza)
@@ -380,14 +383,59 @@ export function parseForgeo(rowsIn) {
   };
 }
 
+// ===========================================================================
+//  MyEmlid  (.mjk / .txt — fejléc nélküli CSV)
+//  Nr, K(Kelet), É(Észak), M(EOV mag.), lat, lon, H(helyi mag.), Mód, dátum-idő, Leírás
+// ===========================================================================
+export function parseMyEmlid(text) {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  const columns = ["Nr", "K", "É", "M", "B", "L", "H", "Dátum", "Idő", "Mód", "Leírás"];
+  const points = [], times = [], descriptions = [];
+  for (const ln of lines) {
+    const f = ln.split(",").map((x) => x.trim());
+    if (f.length < 10) continue;
+    const dt = (f[8].match(/(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/) || []);
+    const date = dt[1] || "", time = dt[2] || f[8];
+    points.push([f[0], f[1], f[2], f[3], f[4], f[5], f[6], date, time, f[7], f[9]]);
+    times.push(parseTs(f[8]));
+    descriptions.push(f[9] || "");
+  }
+  const P = {}; columns.forEach((c, i) => (P[c] = i));
+  const dec = (d) => d.toFixed(8);                           // tizedes fok (ahogy a fájlban)
+  return {
+    manufacturer: "MyEmlid",
+    title: "MyEmlid jegyzőkönyv",
+    meta: [
+      section("Általános adatok", [
+        ["Dátum", points[0] ? points[0][P["Dátum"]] : null],
+        ["Koordináta-rendszer", "EOV/HD72"], ["Félteke", "É"],
+        ["Pontok száma", String(points.length)], ["Formátum", "MyEmlid"],
+      ]),
+    ].filter(Boolean),
+    columns, points, descriptions, times,
+    ctrl: {
+      nevIdx: P["Nr"], kIdx: P["K"], eIdx: P["É"], mIdx: P["M"],
+      szIdx: P["B"], hIdx: P["L"], mmIdx: P["H"], timeIdx: P["Idő"],
+      randomize: [], baseline: null, mmFromOffset: true, durationMs: 2000,
+      formatTime: formatForgeoTime,
+      dmsLat: dec, dmsLon: dec,
+    },
+  };
+}
+
 // Belepesi pont: formatum-felismeres + parse.
-//   text (string)  -> SATLAB (Gyártó:Satlab)
+//   text (string)  -> SATLAB (Gyártó:Satlab) vagy MyEmlid (fejléc nélküli CSV)
 //   rows (tömb)    -> FORGEO/Emlid xls
 export function parseReport(input) {
   if (typeof input === "string") {
     const man = (detectManufacturer(input) || "").toLowerCase();
     if (man.includes("satlab")) return { ok: true, ...parseSatlab(input) };
-    return { ok: false, error: "Ismeretlen szöveges jegyzőkönyv (Satlab várható)." };
+    const first = input.split(/\r?\n/).find((l) => l.trim());
+    const f = first ? first.split(",") : [];
+    if (f.length >= 10 && /^\s*\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(f[8] || "")) {
+      return { ok: true, ...parseMyEmlid(input) };
+    }
+    return { ok: false, error: "Ismeretlen szöveges jegyzőkönyv (Satlab vagy MyEmlid várható)." };
   }
   if (Array.isArray(input)) {
     const flat = input.flat().map(String).join(" ");
