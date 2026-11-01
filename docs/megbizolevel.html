@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Megbízólevél</title>
+<style>
+  :root{ --bg:#0f172a; --card:#1e293b; --line:#334155; --txt:#e2e8f0; --muted:#94a3b8;
+         --accent:#38bdf8; --ok:#22c55e; --err:#ef4444; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--txt);
+       -webkit-font-smoothing:antialiased}
+  header{padding:16px 24px;border-bottom:1px solid var(--line)}
+  header a.home{color:var(--accent);text-decoration:none;font-size:13px}
+  header h1{margin:6px 0 0;font-size:20px}
+  main{max-width:840px;margin:0 auto;padding:22px}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:18px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:620px){.grid{grid-template-columns:1fr}}
+  label{display:block;font-size:13px;color:var(--muted);margin-bottom:5px}
+  input[type=text]{width:100%;padding:10px 11px;background:#0b1220;color:var(--txt);
+       border:1px solid var(--line);border-radius:8px;font-size:15px}
+  input.bad{border-color:var(--err)}
+  .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px}
+  button{background:var(--accent);color:#06283d;border:0;padding:11px 20px;border-radius:9px;
+       font-weight:700;cursor:pointer;font-size:15px}
+  button.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .msg{font-size:13px;color:var(--muted)} .msg.err{color:var(--err)} .msg.ok{color:var(--ok)}
+
+  /* ---- a megbízólevél "papír" ---- */
+  .paper{background:#fff;color:#111;border-radius:8px;padding:26mm 22mm;line-height:1.75;
+         box-shadow:0 8px 34px rgba(0,0,0,.4);font-size:15px}
+  .paper h2{text-align:center;letter-spacing:.14em;font-size:21px;margin-bottom:26px}
+  .paper p{margin:14px 0;text-align:justify}
+  .fv{font-weight:700;border-bottom:1px solid #999;padding:0 4px;white-space:pre-wrap}
+  .fv:empty::before{content:"……………………";color:#bbb;font-weight:400}
+  .kelt{margin-top:30px}
+  .sigblock{margin-top:46px;width:260px;text-align:center}
+  .sigimg{height:70px;display:flex;align-items:flex-end;justify-content:center}
+  .sigimg img{max-width:100%;max-height:70px}
+  .sigline{border-top:1px solid #111;margin-top:2px;padding-top:5px}
+  .signame{font-weight:700}
+  .sigrole{color:#444;font-size:13px}
+
+  /* ---- aláíró overlay (teljes képernyő) ---- */
+  .overlay{position:fixed;inset:0;z-index:100;background:#0b1220;display:none}
+  .overlay.show{display:block}
+  /* forgatás-kérő (álló tájolásnál) */
+  .rotate{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+          justify-content:center;gap:26px;text-align:center;padding:24px;color:#e2e8f0}
+  .rotate .phone{width:70px;height:120px;border:3px solid var(--accent);border-radius:12px;
+          position:relative;animation:tilt 2.2s ease-in-out infinite}
+  .rotate .phone::before{content:"";position:absolute;left:50%;bottom:7px;width:16px;height:3px;
+          background:var(--accent);border-radius:2px;transform:translateX(-50%)}
+  @keyframes tilt{0%,30%{transform:rotate(0)}60%,100%{transform:rotate(-90deg)}}
+  .rotate h2{font-size:21px} .rotate p{color:var(--muted);max-width:30ch;font-size:15px}
+  /* aláíró terület (fekvő tájolásnál) */
+  .sigarea{position:absolute;inset:0;display:none}
+  .sigarea.show{display:block}
+  #sig{position:absolute;left:0;top:0;width:calc(100% - 118px);height:100%;
+       background:#fff;touch-action:none;cursor:crosshair}
+  .bar{position:absolute;right:0;top:0;width:118px;height:100%;background:#0b1220;
+       display:flex;flex-direction:column;gap:12px;padding:16px 12px;
+       border-left:1px solid var(--line)}
+  .bar .hint{color:var(--muted);font-size:11px;text-align:center;margin-bottom:2px}
+  .bar button{width:100%;padding:16px 0;font-size:16px}
+  .bar .done{background:var(--ok);color:#042008}
+  .bar .clear{background:transparent;color:#e2e8f0;border:1px solid var(--line)}
+  .bar .spacer{flex:1}
+  .bar .cancel{background:transparent;color:var(--muted);border:1px solid var(--line);font-size:13px;padding:11px 0}
+
+  @page{size:A4;margin:0}
+  @media print{
+    body{background:#fff}
+    .no-print{display:none!important}
+    main{max-width:none;padding:0}
+    .paper{box-shadow:none;border-radius:0;min-height:100vh}
+  }
+</style>
+</head>
+<body>
+<header class="no-print">
+  <a class="home" href="./index.html">← Kezdőlap</a>
+  <h1>Megbízólevél</h1>
+</header>
+
+<main>
+  <div class="panel no-print">
+    <div class="grid">
+      <div><label>Megbízó neve</label><input type="text" id="megbizoNev" data-req placeholder="pl. Kovács János"></div>
+      <div><label>Megbízó lakcíme</label><input type="text" id="megbizoCim" data-req placeholder="pl. 1111 Budapest, Fő utca 1."></div>
+      <div><label>Megbízott (földmérő) neve</label><input type="text" id="megbizottNev" data-req placeholder="pl. Nagy Géza földmérő"></div>
+      <div><label>Helyrajzi szám</label><input type="text" id="hrsz" data-req placeholder="pl. Budapest 12345/6"></div>
+    </div>
+    <div class="toolbar">
+      <button id="btnSign" disabled>Aláírom</button>
+      <button id="btnPdf" class="ghost" style="display:none">PDF készítése</button>
+      <span class="msg" id="msg">Tölts ki minden mezőt, majd írd alá.</span>
+    </div>
+  </div>
+
+  <!-- A megbízólevél (minta szöveg — később az igazira cseréljük) -->
+  <div class="paper" id="paper">
+    <h2>MEGBÍZÓLEVÉL</h2>
+    <p>Alulírott <span class="fv" data-bind="megbizoNev"></span> (lakcím:
+       <span class="fv" data-bind="megbizoCim"></span>) ezúton megbízom
+       <span class="fv" data-bind="megbizottNev"></span>, hogy a
+       <span class="fv" data-bind="hrsz"></span> helyrajzi számú ingatlan geodéziai
+       felmérését és a kapcsolódó hatósági ügyintézést a nevemben és képviseletemben
+       teljeskörűen elvégezze.</p>
+    <p>Jelen megbízás a kapcsolódó dokumentumok átvételére is kiterjed, és
+       visszavonásig érvényes.</p>
+    <p class="kelt">Kelt: Budapest, <span id="kelt"></span></p>
+    <div class="sigblock">
+      <div class="sigimg" id="sigImg"></div>
+      <div class="sigline"></div>
+      <div class="signame"><span class="fv" data-bind="megbizoNev"></span></div>
+      <div class="sigrole">Megbízó</div>
+    </div>
+  </div>
+</main>
+
+<!-- Teljes képernyős aláíró overlay -->
+<div class="overlay no-print" id="ov">
+  <div class="rotate" id="rotate">
+    <div class="phone"></div>
+    <h2>Fordítsd el a telefont</h2>
+    <p>Az aláíráshoz fektesd fekvő (vízszintes) helyzetbe a készüléket.</p>
+  </div>
+  <div class="sigarea" id="sigarea">
+    <canvas id="sig"></canvas>
+    <div class="bar">
+      <div class="hint">Írj alá az ujjaddal</div>
+      <button class="done" id="done">KÉSZ</button>
+      <button class="clear" id="clear">Töröl</button>
+      <div class="spacer"></div>
+      <button class="cancel" id="cancel">Mégse</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const inputs = [...document.querySelectorAll('[data-req]')];
+
+// dátum (ma)
+const now = new Date();
+$('#kelt').textContent = `${now.getFullYear()}. ${String(now.getMonth()+1).padStart(2,'0')}. ${String(now.getDate()).padStart(2,'0')}.`;
+
+// élő kitöltés a papíron + validáció
+function sync(){
+  document.querySelectorAll('[data-bind]').forEach(el=>{
+    const v = ($('#'+el.dataset.bind)||{}).value || '';
+    el.textContent = v;
+  });
+  const allFilled = inputs.every(i=>i.value.trim());
+  $('#btnSign').disabled = !allFilled;
+}
+inputs.forEach(i=>i.addEventListener('input',()=>{ i.classList.remove('bad'); sync(); }));
+sync();
+
+// ---- aláíró overlay ----
+const ov = $('#ov'), canvas = $('#sig'), ctx = canvas.getContext('2d');
+let drawing=false, hasInk=false, last=null;
+
+function openSign(){
+  const bad = inputs.filter(i=>!i.value.trim());
+  if(bad.length){ bad.forEach(i=>i.classList.add('bad'));
+    $('#msg').className='msg err'; $('#msg').textContent='Előbb tölts ki minden mezőt.'; return; }
+  ov.classList.add('show');
+  orient();
+  window.addEventListener('resize', orient);
+}
+function closeSign(){ ov.classList.remove('show'); window.removeEventListener('resize', orient); }
+
+function orient(){
+  const landscape = window.innerWidth > window.innerHeight;
+  $('#sigarea').classList.toggle('show', landscape);
+  $('#rotate').style.display = landscape ? 'none' : 'flex';
+  if(landscape) fitCanvas();
+}
+function fitCanvas(){
+  const r = canvas.getBoundingClientRect(), d = Math.min(2, window.devicePixelRatio||1);
+  canvas.width = Math.round(r.width*d); canvas.height = Math.round(r.height*d);
+  ctx.setTransform(d,0,0,d,0,0);
+  ctx.lineWidth=2.6; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.strokeStyle='#0b2a4a';
+  // újraméretezéskor üres lap (a rajz nem skálázódik torzan)
+  hasInk=false;
+}
+function pos(e){ const r=canvas.getBoundingClientRect(); return { x:e.clientX-r.left, y:e.clientY-r.top }; }
+canvas.addEventListener('pointerdown', e=>{ e.preventDefault(); drawing=true; last=pos(e); canvas.setPointerCapture(e.pointerId); });
+canvas.addEventListener('pointermove', e=>{ if(!drawing) return; e.preventDefault(); const p=pos(e);
+  ctx.beginPath(); ctx.moveTo(last.x,last.y); ctx.lineTo(p.x,p.y); ctx.stroke(); last=p; hasInk=true; });
+const stop=()=>{ drawing=false; };
+canvas.addEventListener('pointerup', stop); canvas.addEventListener('pointercancel', stop);
+
+$('#clear').onclick = ()=>{ ctx.clearRect(0,0,canvas.width,canvas.height); hasInk=false; };
+$('#cancel').onclick = closeSign;
+$('#done').onclick = ()=>{
+  if(!hasInk){ alert('Előbb írj alá.'); return; }
+  const url = canvas.toDataURL('image/png');
+  $('#sigImg').innerHTML = `<img src="${url}" alt="aláírás">`;
+  closeSign();
+  $('#btnPdf').style.display='';
+  $('#msg').className='msg ok'; $('#msg').textContent='Aláírva. Most elkészítheted a PDF-et.';
+};
+
+$('#btnSign').onclick = openSign;
+$('#btnPdf').onclick = ()=>window.print();
+</script>
+</body>
+</html>
