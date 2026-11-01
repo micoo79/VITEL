@@ -6,3 +6,6 @@ ref.json
 node_modules/
 package.json
 package-lock.json
+
+# alairas-relay futasideju taroloja
+docs/relay/_sigstore/
