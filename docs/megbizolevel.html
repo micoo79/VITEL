@@ -31,6 +31,39 @@
   button.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent)}
   button:disabled{opacity:.45;cursor:not-allowed}
   .msg{font-size:13px;color:var(--muted)} .msg.err{color:var(--err)} .msg.ok{color:var(--ok)}
+  .hintline{font-size:12px;color:var(--muted);margin-top:10px}
+
+  /* ---- QR párosító modal (asztali, érintő nélküli gép) ---- */
+  .modal{position:fixed;inset:0;z-index:90;background:rgba(5,9,18,.72);
+         display:none;align-items:center;justify-content:center;padding:20px}
+  .modal.show{display:flex}
+  .modal .box{background:var(--card);border:1px solid var(--line);border-radius:14px;
+         padding:24px;max-width:380px;width:100%;text-align:center}
+  .modal h3{font-size:18px;margin-bottom:6px}
+  .modal p{font-size:13px;color:var(--muted);margin-bottom:16px;line-height:1.5}
+  .qrbox{background:#fff;border-radius:10px;padding:14px;display:inline-block;line-height:0}
+  .qrbox img,.qrbox canvas{width:220px;height:220px;image-rendering:pixelated}
+  .qrstatus{margin-top:16px;font-size:13px;color:var(--accent);display:flex;gap:8px;
+            align-items:center;justify-content:center}
+  .qrstatus.ok{color:var(--ok)} .qrstatus.err{color:var(--err)}
+  .spin{width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--accent);
+        border-radius:50%;animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .modal .mclose{margin-top:18px;background:transparent;color:var(--muted);border:1px solid var(--line);
+         padding:10px 18px;font-size:13px}
+  .modal .setup{font-size:12px;color:var(--muted);word-break:break-all;background:#0b1220;
+         border:1px solid var(--line);border-radius:8px;padding:10px;margin-top:6px;text-align:left}
+
+  /* ---- távoli aláírás mód (a telefon, amire a QR mutat) ---- */
+  body.remote header, body.remote main{display:none}
+  .remoteview{position:fixed;inset:0;z-index:80;background:var(--bg);color:var(--txt);
+         display:none;flex-direction:column;align-items:center;justify-content:center;
+         gap:18px;text-align:center;padding:28px}
+  body.remote .remoteview{display:flex}
+  .remoteview.done-screen{display:none}
+  .remoteview h2{font-size:22px} .remoteview p{color:var(--muted);max-width:32ch;font-size:15px}
+  .remoteview .big{font-size:52px;line-height:1}
+  .remoteview button{margin-top:6px}
 
   /* ---- a megbízólevél "papír" ---- */
   .paper{background:#fff;color:#111;border-radius:8px;padding:26mm 22mm;line-height:1.75;
@@ -101,10 +134,12 @@
       <div><label>Helyrajzi szám</label><input type="text" id="hrsz" data-req placeholder="pl. Budapest 12345/6"></div>
     </div>
     <div class="toolbar">
-      <button id="btnSign" disabled>Aláírom</button>
+      <button id="btnSign" disabled>Aláírom itt</button>
+      <button id="btnQR" class="ghost" disabled>Aláírás telefonon (QR)</button>
       <button id="btnPdf" class="ghost" style="display:none">PDF készítése</button>
       <span class="msg" id="msg">Tölts ki minden mezőt, majd írd alá.</span>
     </div>
+    <div class="hintline" id="touchHint"></div>
   </div>
 
   <!-- A megbízólevél (minta szöveg — később az igazira cseréljük) -->
@@ -147,6 +182,33 @@
   </div>
 </div>
 
+<!-- QR párosító modal (érintő nélküli gépen) -->
+<div class="modal no-print" id="qrmodal">
+  <div class="box">
+    <h3>Aláírás a telefonoddal</h3>
+    <p>Olvasd be ezt a QR-kódot a telefonod kamerájával, írd alá a megnyíló
+       oldalon, és az aláírás magától megjelenik itt.</p>
+    <div class="qrbox" id="qrbox"></div>
+    <div class="qrstatus" id="qrstatus"><span class="spin"></span><span>Várakozás az aláírásra…</span></div>
+    <button class="mclose" id="qrclose">Mégse</button>
+  </div>
+</div>
+
+<!-- Távoli aláírás nézet (a telefon, amire a QR mutat) -->
+<div class="remoteview" id="remoteStart">
+  <div class="big">✍️</div>
+  <h2>Megbízólevél aláírása</h2>
+  <p>Fektesd fekvő helyzetbe a telefont, és írj alá. Az aláírás a számítógépedre kerül.</p>
+  <button id="remoteSignBtn">Aláírás indítása</button>
+</div>
+<div class="remoteview done-screen" id="remoteDone" style="display:none">
+  <div class="big" style="color:var(--ok)">✓</div>
+  <h2>Aláírás elküldve</h2>
+  <p>Visszatérhetsz a számítógéphez — ott már megjelent az aláírás, és elkészítheted a PDF-et. Ezt az ablakot bezárhatod.</p>
+</div>
+
+<script src="./config.js"></script>
+<script src="./vendor/qrcode.min.js"></script>
 <script>
 const $ = s => document.querySelector(s);
 const inputs = [...document.querySelectorAll('[data-req]')];
@@ -163,6 +225,7 @@ function sync(){
   });
   const allFilled = inputs.every(i=>i.value.trim());
   $('#btnSign').disabled = !allFilled;
+  $('#btnQR').disabled = !allFilled;
 }
 inputs.forEach(i=>i.addEventListener('input',()=>{ i.classList.remove('bad'); sync(); }));
 sync();
@@ -172,10 +235,15 @@ const ov = $('#ov'), canvas = $('#sig'), ctx = canvas.getContext('2d');
 let drawing=false, hasInk=false, last=null;
 
 function onViewport(){ applyVV(); orient(); }
-function openSign(){
-  const bad = inputs.filter(i=>!i.value.trim());
-  if(bad.length){ bad.forEach(i=>i.classList.add('bad'));
-    $('#msg').className='msg err'; $('#msg').textContent='Előbb tölts ki minden mezőt.'; return; }
+let signRemote=false;
+function openSign(remote){
+  signRemote = !!remote;
+  if(!remote){
+    const bad = inputs.filter(i=>!i.value.trim());
+    if(bad.length){ bad.forEach(i=>i.classList.add('bad'));
+      $('#msg').className='msg err'; $('#msg').textContent='Előbb tölts ki minden mezőt.'; return; }
+  }
+  hasInk=false; ctx.clearRect(0,0,canvas.width,canvas.height);   // friss lap minden megnyitáskor
   ov.classList.add('show');
   goFullscreen();                       // teljes képernyő ott, ahol a böngésző engedi
   onViewport();
@@ -281,18 +349,120 @@ if(window.PointerEvent){                 // modern: egy API egér/érintő/toll 
 }
 
 $('#clear').onclick = ()=>{ ctx.clearRect(0,0,canvas.width,canvas.height); hasInk=false; };
-$('#cancel').onclick = closeSign;
+$('#cancel').onclick = ()=>{ closeSign(); if(signRemote) $('#remoteStart').style.display=''; };
 $('#done').onclick = ()=>{
   if(!hasInk){ alert('Előbb írj alá.'); return; }
-  const url = canvas.toDataURL('image/png');
+  const url = sigDataURL(900);
+  if(signRemote){ sendRemoteSignature(url); return; }        // telefonról: feltöltés a relay-re
   $('#sigImg').innerHTML = `<img src="${url}" alt="aláírás">`;
   closeSign();
   $('#btnPdf').style.display='';
   $('#msg').className='msg ok'; $('#msg').textContent='Aláírva. Most elkészítheted a PDF-et.';
 };
 
-$('#btnSign').onclick = openSign;
+$('#btnSign').onclick = ()=>openSign(false);
 $('#btnPdf').onclick = ()=>window.print();
+
+// ===================== Aláírás másik eszközön: QR + saját relay =====================
+const RELAY = (window.VITEL_SIGN_RELAY || '').trim();
+function relayUrl(token){ return RELAY + (RELAY.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token); }
+
+// kisebb PNG a feltöltéshez/beillesztéshez (max szélesség)
+function sigDataURL(maxW){
+  const sw=canvas.width, sh=canvas.height;
+  const scale=Math.min(1, (maxW||900)/Math.max(1,sw));
+  if(scale>=1) return canvas.toDataURL('image/png');
+  const o=document.createElement('canvas'); o.width=Math.round(sw*scale); o.height=Math.round(sh*scale);
+  o.getContext('2d').drawImage(canvas,0,0,o.width,o.height);
+  return o.toDataURL('image/png');
+}
+
+// érintés-érzékelés + gombok igazítása
+const HAS_TOUCH = (navigator.maxTouchPoints>0) || ('ontouchstart' in window)
+               || (window.matchMedia && window.matchMedia('(pointer:coarse)').matches);
+(function setupButtons(){
+  const bS=$('#btnSign'), bQ=$('#btnQR'), hint=$('#touchHint');
+  if(!RELAY){                                  // nincs beállítva relay → nincs QR-opció
+    bQ.style.display='none';
+    hint.textContent = HAS_TOUCH ? '' : 'Tipp: telefonos (QR-es) aláíráshoz állítsd be a relay URL-t a config.js-ben.';
+    return;
+  }
+  if(!HAS_TOUCH){                               // nincs érintőkijelző → a QR a kiemelt út
+    bS.classList.add('ghost'); bS.textContent='Aláírás egérrel';
+    bQ.classList.remove('ghost');
+    bQ.parentNode.insertBefore(bQ, bS);         // QR gomb előre
+    hint.textContent = 'Ezen a gépen nincs érintőkijelző. Olvasd be a QR-kódot a telefonoddal, és ott írj alá — az aláírás magától megjelenik itt.';
+  }
+})();
+
+// QR modal megnyitása + az aláírás lekérdezése a relay-ről
+let pollTimer=null, pollStop=false;
+function openQR(){
+  const bad = inputs.filter(i=>!i.value.trim());
+  if(bad.length){ bad.forEach(i=>i.classList.add('bad'));
+    $('#msg').className='msg err'; $('#msg').textContent='Előbb tölts ki minden mezőt.'; return; }
+  if(!RELAY){ alert('A QR-es aláíráshoz előbb be kell állítani a relay URL-t a config.js-ben.'); return; }
+
+  const token = (crypto.randomUUID ? crypto.randomUUID()
+                 : Date.now()+'-'+Math.random().toString(36).slice(2)+Math.random().toString(36).slice(2))
+                 .replace(/[^A-Za-z0-9_-]/g,'');
+  const signUrl = location.origin + location.pathname + '?sign=' + encodeURIComponent(token);
+
+  const qr = qrcode(0,'M'); qr.addData(signUrl); qr.make();
+  $('#qrbox').innerHTML = qr.createImgTag(5, 8);
+  const st=$('#qrstatus'); st.className='qrstatus';
+  st.innerHTML='<span class="spin"></span><span>Várakozás az aláírásra…</span>';
+  $('#qrmodal').classList.add('show');
+
+  pollStop=false;
+  const started=Date.now();
+  (async function loop(){
+    if(pollStop) return;
+    if(Date.now()-started > 9*60*1000){ st.className='qrstatus err'; st.textContent='Lejárt. Zárd be és próbáld újra.'; return; }
+    try{
+      const res = await fetch(relayUrl(token), {cache:'no-store'});
+      if(res.ok){
+        const j = await res.json();
+        if(j && j.sig){
+          $('#sigImg').innerHTML = `<img src="${j.sig}" alt="aláírás">`;
+          $('#btnPdf').style.display='';
+          $('#msg').className='msg ok'; $('#msg').textContent='Aláírva (telefonról). Most elkészítheted a PDF-et.';
+          st.className='qrstatus ok'; st.textContent='✓ Megérkezett.';
+          setTimeout(closeQR, 900); return;
+        }
+      }
+    }catch(_){ /* hálózati hiba — újrapróbáljuk */ }
+    pollTimer=setTimeout(loop, 2000);
+  })();
+}
+function closeQR(){ pollStop=true; if(pollTimer) clearTimeout(pollTimer); $('#qrmodal').classList.remove('show'); }
+$('#btnQR').onclick = openQR;
+$('#qrclose').onclick = closeQR;
+
+// a telefon oldaláról: az aláírás feltöltése a relay-re
+async function sendRemoteSignature(dataURL){
+  const token = new URLSearchParams(location.search).get('sign');
+  const done=$('#done'); const old=done.textContent;
+  done.disabled=true; done.textContent='Küldés…';
+  try{
+    const res = await fetch(relayUrl(token), {method:'POST', headers:{'Content-Type':'text/plain'}, body:dataURL});
+    if(!res.ok) throw new Error('relay '+res.status);
+    closeSign();
+    $('#remoteStart').style.display='none';
+    $('#remoteDone').style.display='flex';
+  }catch(err){
+    done.disabled=false; done.textContent=old;
+    alert('Nem sikerült elküldeni az aláírást. Ellenőrizd az internetkapcsolatot, és próbáld újra.');
+  }
+}
+
+// távoli aláírás mód: ha a QR-ből (?sign=TOKEN) nyílt meg az oldal a telefonon
+(function remoteMode(){
+  const token = new URLSearchParams(location.search).get('sign');
+  if(!token) return;
+  document.body.classList.add('remote');
+  $('#remoteSignBtn').onclick = ()=>{ $('#remoteStart').style.display='none'; openSign(true); };
+})();
 </script>
 </body>
 </html>
