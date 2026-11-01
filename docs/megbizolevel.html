@@ -169,25 +169,63 @@ function openSign(){
   if(bad.length){ bad.forEach(i=>i.classList.add('bad'));
     $('#msg').className='msg err'; $('#msg').textContent='Előbb tölts ki minden mezőt.'; return; }
   ov.classList.add('show');
+  goFullscreen();                       // teljes képernyő — nincs böngészősáv
   orient();
   window.addEventListener('resize', orient);
 }
-function closeSign(){ ov.classList.remove('show'); window.removeEventListener('resize', orient); }
+function closeSign(){
+  ov.classList.remove('show');
+  window.removeEventListener('resize', orient);
+  try{ screen.orientation && screen.orientation.unlock && screen.orientation.unlock(); }catch(_){}
+  dropFullscreen();
+}
+
+// --- teljes képernyő (a gombnyomás érvényes felhasználói gesztus) ---
+function goFullscreen(){
+  const req = ov.requestFullscreen || ov.webkitRequestFullscreen || ov.webkitRequestFullScreen;
+  if(req){ try{ const p = req.call(ov); if(p && p.catch) p.catch(()=>{}); }catch(_){} }
+}
+function dropFullscreen(){
+  const fs = document.fullscreenElement || document.webkitFullscreenElement;
+  const ex = document.exitFullscreen || document.webkitExitFullscreen;
+  if(fs && ex){ try{ const p = ex.call(document); if(p && p.catch) p.catch(()=>{}); }catch(_){} }
+}
+// teljes képernyőben fekvőre zárjuk a tájolást (ahol támogatott); tartalék a forgatás-kérő
+function onFsChange(){
+  const fs = document.fullscreenElement || document.webkitFullscreenElement;
+  if(fs){ try{ const p = screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape'); if(p && p.catch) p.catch(()=>{}); }catch(_){} }
+  else if(ov.classList.contains('show')) closeSign();   // a felhasználó kilépett a teljes képernyőből
+}
+document.addEventListener('fullscreenchange', onFsChange);
+document.addEventListener('webkitfullscreenchange', onFsChange);
 
 function orient(){
   const landscape = window.innerWidth > window.innerHeight;
   $('#sigarea').classList.toggle('show', landscape);
   $('#rotate').style.display = landscape ? 'none' : 'flex';
-  if(landscape) fitCanvas();
+  if(landscape) requestAnimationFrame(fitCanvas);   // a layout leülepedése után
 }
+// A vásznat MINDIG a tényleges (elrendezés utáni) megjelenített méretre igazítja,
+// hogy a rajz oda kerüljön, ahová az ujj ér — tájolásváltás után is. A meglévő
+// aláírást átmenti a méretváltáskor.
 function fitCanvas(){
+  if(!$('#sigarea').classList.contains('show')) return;
   const r = canvas.getBoundingClientRect(), d = Math.min(2, window.devicePixelRatio||1);
-  canvas.width = Math.round(r.width*d); canvas.height = Math.round(r.height*d);
+  const w = Math.max(1, Math.round(r.width*d)), h = Math.max(1, Math.round(r.height*d));
+  if(canvas.width===w && canvas.height===h) return;       // nincs valódi méretváltozás
+  let prev=null;
+  if(hasInk && canvas.width>0 && canvas.height>0){        // meglévő rajz megőrzése
+    prev=document.createElement('canvas'); prev.width=canvas.width; prev.height=canvas.height;
+    prev.getContext('2d').drawImage(canvas,0,0);
+  }
+  canvas.width=w; canvas.height=h;
   ctx.setTransform(d,0,0,d,0,0);
-  ctx.lineWidth=2.6; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.strokeStyle='#0b2a4a';
-  // újraméretezéskor üres lap (a rajz nem skálázódik torzan)
-  hasInk=false;
+  ctx.lineWidth=2.6; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.strokeStyle='#1133cc';
+  if(prev){ ctx.save(); ctx.setTransform(1,0,0,1,0,0);
+    ctx.drawImage(prev,0,0,prev.width,prev.height,0,0,w,h); ctx.restore(); }
 }
+// a megjelenített canvas-méret valódi változására is reagál (a leghitelesebb jelzés)
+new ResizeObserver(()=>fitCanvas()).observe(canvas);
 function pos(e){ const r=canvas.getBoundingClientRect(); return { x:e.clientX-r.left, y:e.clientY-r.top }; }
 canvas.addEventListener('pointerdown', e=>{ e.preventDefault(); drawing=true; last=pos(e); canvas.setPointerCapture(e.pointerId); });
 canvas.addEventListener('pointermove', e=>{ if(!drawing) return; e.preventDefault(); const p=pos(e);
